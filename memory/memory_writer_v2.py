@@ -5,6 +5,7 @@ import re
 from memory_updater import decide_update
 from memory_core import scan as scan_core
 from embedding_index import sync as sync_embeddings
+from memory_validation import validate_decision
 
 
 MEMORY_ROOT = Path.home() / "AI-System" / "memory"
@@ -232,15 +233,47 @@ def archive_existing_memory(path, memory_id):
 
     archived_text = "\n".join(lines) + "\n"
 
+    import os
+    import tempfile
+
     ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
 
     archive_path = ARCHIVE_ROOT / f"{version_id}.md"
-    archive_path.write_text(archived_text, encoding="utf-8")
+    temp_path = None
 
-    print(f"[ARCHIVE] {memory_id}")
-    print(f"          {archive_path}")
+    try:
+        # Prepare the complete archive before publishing its final name.
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(ARCHIVE_ROOT),
+            prefix=f".{version_id}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(archived_text)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
 
-    return archive_path
+        # Atomic publication without overwriting existing history.
+        # The temporary file and archive must be on the same filesystem.
+        os.link(str(temp_path), str(archive_path))
+
+        print(f"[ARCHIVE] {memory_id}")
+        print(f"          {archive_path}")
+
+        return archive_path
+
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError as exc:
+                print(
+                    f"[WARNING] Could not clean up temporary file: "
+                    f"{temp_path} ({exc})"
+                )
 
 
 def update_memory(memory_id, memory):
@@ -256,9 +289,6 @@ def update_memory(memory_id, memory):
     )
 
     metadata = parse_frontmatter(old_text)
-
-    # 先归档旧版本
-    archive_existing_memory(path, memory_id)
 
     memory_type = (
         memory.get("type")
@@ -298,10 +328,46 @@ updated_at: {now_date()}
 {clean_memory_body(memory.get("memory"))}
 """
 
-    path.write_text(
-        new_content,
-        encoding="utf-8"
-    )
+    # Write the complete new version to a temporary file first.
+    import os
+    import tempfile
+
+    temp_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            prefix=f".{path.stem}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(new_content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+
+        # Archive the original only after the new version is ready.
+        archive_path = archive_existing_memory(path, memory_id)
+
+        if not archive_path:
+            print(f"[ERROR] Could not archive memory: {memory_id}")
+            return None
+
+        # Replace the active file atomically on the same filesystem.
+        os.replace(str(temp_path), str(path))
+        temp_path = None
+
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError as exc:
+                print(
+                    f"[WARNING] Could not clean up temporary file: "
+                    f"{temp_path} ({exc})"
+                )
 
     print(f"[UPDATE] {memory_id}")
     print(f"         {path}")
@@ -318,9 +384,26 @@ def execute(user_input):
         print("[ERROR] No decision returned.")
         return
 
+    is_valid, reason = validate_decision(decision)
+    if not is_valid:
+        print(f"[REJECTED] Invalid memory decision: {reason}")
+        print("No candidate or active memory was written.")
+        return
+
     action = decision.get("action")
 
     print(f"Action: {action}")
+
+    # Validate update targets before creating candidate files.
+    if action in ("UPDATE", "MERGE"):
+        target_id = decision.get("target_id")
+
+        if not find_memory_file(target_id):
+            print(
+                f"[REJECTED] Target memory does not exist: {target_id}"
+            )
+            print("No candidate or active memory was written.")
+            return
 
     candidate_path = None
 
