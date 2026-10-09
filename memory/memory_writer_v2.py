@@ -79,7 +79,15 @@ def sync_indexes():
         return False
 
     try:
-        sync_embeddings()
+        embeddings_synced = sync_embeddings()
+
+        if embeddings_synced is False:
+            print(
+                "[EMBEDDING ERROR] "
+                "Semantic index synchronization was incomplete."
+            )
+            return False
+
         print("[EMBEDDING] Semantic index synchronized.")
     except Exception as e:
         print(f"[EMBEDDING ERROR] {e}")
@@ -464,7 +472,14 @@ def execute(user_input):
 
     # Only synchronize indexes after a successful NEW / UPDATE / MERGE.
     # IGNORE returns above and therefore never triggers synchronization.
-    sync_indexes()
+    indexes_synced = sync_indexes()
+
+    if not indexes_synced:
+        print(
+            "\n[WARNING] Memory was written, but index synchronization failed. "
+            "The memory file may exist while its indexes are outdated."
+        )
+        return
 
     print("\nWriter operation completed.")
 

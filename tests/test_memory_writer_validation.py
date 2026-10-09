@@ -115,5 +115,68 @@ class TestMemoryWriterValidation(unittest.TestCase):
             sync_indexes.assert_not_called()
 
 
+    def test_sync_indexes_propagates_embedding_failure(self):
+        from memory import memory_writer_v2
+
+        output = StringIO()
+
+        with patch.object(
+            memory_writer_v2, "scan_core"
+        ), patch.object(
+            memory_writer_v2, "sync_embeddings", return_value=False
+        ), redirect_stdout(output):
+            result = memory_writer_v2.sync_indexes()
+
+        self.assertIs(
+            result,
+            False,
+            "嵌入索引同步失败时，sync_indexes() 必须返回 False。",
+        )
+        self.assertIn(
+            "synchronization was incomplete",
+            output.getvalue().lower(),
+        )
+        self.assertNotIn(
+            "Memory indexes synchronized.",
+            output.getvalue(),
+        )
+
+
+    def test_index_sync_failure_is_not_reported_as_success(self):
+        new_decision = {
+            "action": "NEW",
+            "target_id": None,
+            "type": "preferences",
+            "importance": 0.8,
+            "confidence": 0.95,
+            "memory": "测试索引同步失败时的状态报告。",
+        }
+
+        with patch(
+            "memory.memory_writer_v2.decide_update",
+            return_value=new_decision,
+        ), patch(
+            "memory.memory_writer_v2.write_candidate",
+            return_value=Path("/tmp/test_candidate.md"),
+        ), patch(
+            "memory.memory_writer_v2.write_new_memory",
+            return_value=Path("/tmp/test_memory.md"),
+        ), patch(
+            "memory.memory_writer_v2.archive_candidate"
+        ), patch(
+            "memory.memory_writer_v2.sync_indexes",
+            return_value=False,
+        ):
+            from memory.memory_writer_v2 import execute
+
+            output = StringIO()
+            with redirect_stdout(output):
+                execute("模拟正式记忆写入成功但索引同步失败")
+
+        result = output.getvalue()
+        self.assertIn("index synchronization failed", result.lower())
+        self.assertNotIn("Writer operation completed.", result)
+
+
 if __name__ == "__main__":
     unittest.main()

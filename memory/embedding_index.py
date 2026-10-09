@@ -84,6 +84,8 @@ def content_hash(text):
 def sync():
     conn = get_db()
     current_ids = set()
+    parse_failed = False
+    embedding_failed = False
 
     files = list(MEMORY_ROOT.rglob("*.md"))
 
@@ -101,6 +103,7 @@ def sync():
             metadata, content = parse_memory(path)
         except Exception as e:
             print(f"Skipping {path}: {e}")
+            parse_failed = True
             continue
 
         memory_id = metadata.get("id")
@@ -131,6 +134,7 @@ def sync():
             vector = get_embedding(content)
         except Exception as e:
             print(f"         ERROR: {e}")
+            embedding_failed = True
             continue
 
         blob = vector_to_blob(vector)
@@ -158,15 +162,23 @@ def sync():
 
         print(f"         dimension: {len(vector)}")
 
-    rows = conn.execute("SELECT id, path FROM embeddings").fetchall()
+    if parse_failed:
+        print(
+            "\n[WARNING] Markdown parsing failed. "
+            "Skipping index cleanup to preserve existing vectors."
+        )
+    else:
+        rows = conn.execute(
+            "SELECT id, path FROM embeddings"
+        ).fetchall()
 
-    for memory_id, path in rows:
-        if memory_id not in current_ids or not Path(path).exists():
-            print(f"[DELETE] {memory_id}")
-            conn.execute(
-                "DELETE FROM embeddings WHERE id = ?",
-                (memory_id,)
-            )
+        for memory_id, path in rows:
+            if memory_id not in current_ids or not Path(path).exists():
+                print(f"[DELETE] {memory_id}")
+                conn.execute(
+                    "DELETE FROM embeddings WHERE id = ?",
+                    (memory_id,)
+                )
 
     conn.commit()
 
@@ -178,6 +190,12 @@ def sync():
 
     print(f"\nEmbedding index ready.")
     print(f"Vectors stored on SSD: {total}")
+
+    if parse_failed or embedding_failed:
+        print("[WARNING] Embedding index synchronization was incomplete.")
+        return False
+
+    return True
 
 
 def cosine_similarity(a, b):
