@@ -1,0 +1,282 @@
+[
+  {
+    "name": "模型选择偏好：直接提问",
+    "query": "我选本地 AI 时最在意哪些方面？",
+    "relevant_files": [
+      "mem_20261007_094401_644218.md"
+    ]
+  },
+  {
+    "name": "模型选择偏好：改写",
+    "query": "挑选本地大语言模型时，我应该优先考虑什么？",
+    "relevant_files": [
+      "mem_20261007_094401_644218.md"
+    ]
+  },
+  {
+    "name": "模型选择偏好：反向表达",
+    "query": "选模型不能只看参数量，那还应该看什么？",
+    "relevant_files": [
+      "mem_20261007_094401_644218.md"
+    ]
+  },
+  {
+    "name": "电脑预算：直接提问",
+    "query": "我买电脑最多能花多少钱？",
+    "relevant_files": [
+      "mem_20261007_122001_277623.md"
+    ]
+  },
+  {
+    "name": "电脑预算：数字查询",
+    "query": "我的电脑采购预算上限是多少人民币？",
+    "relevant_files": [
+      "mem_20261007_122001_277623.md"
+    ]
+  },
+  {
+    "name": "电脑预算：约束条件",
+    "query": "给我推荐电脑时，不能超过什么价格限制？",
+    "relevant_files": [
+      "mem_20261007_122001_277623.md"
+    ]
+  },
+  {
+    "name": "硬件偏好：直接提问",
+    "query": "组装电脑时，我最在乎哪些硬件？",
+    "relevant_files": [
+      "mem_20261007_133914_853095.md"
+    ]
+  },
+  {
+    "name": "硬件偏好：存储和显存",
+    "query": "我买电脑时对 SSD 和显存有什么要求？",
+    "relevant_files": [
+      "mem_20261007_133914_853095.md"
+    ]
+  },
+  {
+    "name": "硬件偏好：外观取舍",
+    "query": "电脑的颜值和硬件配置相比，我更重视什么？",
+    "relevant_files": [
+      "mem_20261007_133914_853095.md"
+    ]
+  },
+  {
+    "name": "开发习惯：直接提问",
+    "query": "我喜欢怎样开发和调试自己的 AI 系统？",
+    "relevant_files": [
+      "mem_20261007_165811_987924.md"
+    ]
+  },
+  {
+    "name": "开发习惯：测试流程",
+    "query": "修改代码以后，我希望马上做什么？",
+    "relevant_files": [
+      "mem_20261007_165811_987924.md"
+    ]
+  },
+  {
+    "name": "开发习惯：工作方式",
+    "query": "开发项目时，我倾向于一次性大改还是逐步修改？",
+    "relevant_files": [
+      "mem_20261007_165811_987924.md"
+    ]
+  },
+  {
+    "name": "大学计划：学校名称",
+    "query": "我计划去莫斯科的哪所大学读本科？",
+    "relevant_files": [
+      "mem_20261009_114847_521874.md"
+    ]
+  },
+  {
+    "name": "大学计划：学习安排",
+    "query": "我准备在哪里开始新的四年本科生活？",
+    "relevant_files": [
+      "mem_20261009_114847_521874.md"
+    ]
+  },
+  {
+    "name": "大学计划：英文混合查询",
+    "query": "我计划去哪个 university 读 bachelor？",
+    "relevant_files": [
+      "mem_20261009_114847_521874.md"
+    ]
+  },
+  {
+    "name": "无答案：饮品偏好",
+    "query": "我最喜欢喝哪种咖啡？",
+    "relevant_files": []
+  },
+  {
+    "name": "无答案：个人证件",
+    "query": "我的护照号码是多少？",
+    "relevant_files": []
+  },
+  {
+    "name": "无答案：具体电脑型号",
+    "query": "我最后决定购买哪一款显卡？",
+    "relevant_files": []
+  },
+  {
+    "name": "无答案：编程语言偏好",
+    "query": "我最喜欢使用哪种编程语言？",
+    "relevant_files": []
+  },
+  {
+    "name": "无答案：生活偏好",
+    "query": "我最喜欢什么颜色？",
+    "relevant_files": []
+  },
+  {
+    "query": "帮我选本地模型时，最重要的评判标准是什么？",
+    "relevant_files": [
+      "mem_20261007_094401_644218.md"
+    ]
+  },
+  {
+    "query": "Compared with model size, what matters more to me for local AI?",
+    "relevant_files": [
+      "mem_20261007_094401_644218.md"
+    ]
+  },
+  {
+    "query": "我希望本地 AI 长期使用时具备哪些特点？",
+    "relevant_files": [
+      "mem_20261007_094401_644218.md"
+    ]
+  },
+  {
+    "query": "请按照我之前定下的电脑预算推荐配置。",
+    "relevant_files": [
+      "mem_20261007_122001_277623.md"
+    ]
+  },
+  {
+    "query": "What is the maximum budget I set for a computer?",
+    "relevant_files": [
+      "mem_20261007_122001_277623.md"
+    ]
+  },
+  {
+    "query": "除非我改变主意，配电脑的预算是多少？",
+    "relevant_files": [
+      "mem_20261007_122001_277623.md"
+    ]
+  },
+  {
+    "query": "购买电脑时，哪些配置比外观更值得我关注？",
+    "relevant_files": [
+      "mem_20261007_133914_853095.md"
+    ]
+  },
+  {
+    "query": "Which two hardware aspects do I prioritize when buying a PC?",
+    "relevant_files": [
+      "mem_20261007_133914_853095.md"
+    ]
+  },
+  {
+    "query": "如果电脑很好看但 SSD 和显存不理想，符合我的偏好吗？",
+    "relevant_files": [
+      "mem_20261007_133914_853095.md"
+    ]
+  },
+  {
+    "query": "你修改完我的项目代码后，应该采用什么工作流程？",
+    "relevant_files": [
+      "mem_20261007_165811_987924.md"
+    ]
+  },
+  {
+    "query": "What is my preferred coding and testing workflow?",
+    "relevant_files": [
+      "mem_20261007_165811_987924.md"
+    ]
+  },
+  {
+    "query": "开发本地 AI 时，我希望每次改动多大？",
+    "relevant_files": [
+      "mem_20261007_165811_987924.md"
+    ]
+  },
+  {
+    "query": "我接下来四年的本科准备在哪所学校度过？",
+    "relevant_files": [
+      "mem_20261009_114847_521874.md"
+    ]
+  },
+  {
+    "query": "Which university did I plan to attend for my bachelor's degree in Moscow?",
+    "relevant_files": [
+      "mem_20261009_114847_521874.md"
+    ]
+  },
+  {
+    "query": "我之前提到要去莫斯科哪所师范大学读书？",
+    "relevant_files": [
+      "mem_20261009_114847_521874.md"
+    ]
+  },
+  {
+    "query": "我最喜欢的电影是哪一部？",
+    "relevant_files": []
+  },
+  {
+    "query": "我每天通常几点睡觉？",
+    "relevant_files": []
+  },
+  {
+    "query": "我最喜欢的水果是什么？",
+    "relevant_files": []
+  },
+  {
+    "query": "What is my favorite programming language?",
+    "relevant_files": []
+  },
+  {
+    "query": "我目前的银行卡余额是多少？",
+    "relevant_files": []
+  },
+  {
+    "query": "我最喜欢哪支足球队？",
+    "relevant_files": []
+  },
+  {
+    "query": "我的手机解锁密码是什么？",
+    "relevant_files": []
+  },
+  {
+    "query": "我最喜欢的音乐人是谁？",
+    "relevant_files": []
+  },
+  {
+    "query": "What is my passport number?",
+    "relevant_files": []
+  },
+  {
+    "query": "我上一次考试具体得了多少分？",
+    "relevant_files": []
+  },
+  {
+    "query": "我最喜欢的游戏是哪一款？",
+    "relevant_files": []
+  },
+  {
+    "query": "我平时每天运动多少分钟？",
+    "relevant_files": []
+  },
+  {
+    "query": "What is my favorite restaurant?",
+    "relevant_files": []
+  },
+  {
+    "query": "我现在的俄罗斯宿舍房间号是多少？",
+    "relevant_files": []
+  },
+  {
+    "query": "我最喜欢哪个季节？",
+    "relevant_files": []
+  }
+]

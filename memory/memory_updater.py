@@ -312,12 +312,22 @@ NEW / UPDATE / MERGE / IGNORE
 
     target_id = decision.get("target_id")
 
-    if action in {"UPDATE", "MERGE"} and target_id:
+    if action in {"UPDATE", "MERGE"}:
         valid_ids = {item["id"] for item in candidates}
 
-        if target_id not in valid_ids:
-            action = "NEW"
-            target_id = None
+        if not target_id or target_id not in valid_ids:
+            return {
+                "action": "IGNORE",
+                "target_id": None,
+                "type": gate.get("type"),
+                "importance": gate.get("importance", 0.0),
+                "confidence": gate.get("confidence", 0.0),
+                "memory": None,
+                "reason": (
+                    f"Invalid {action} target: "
+                    f"{target_id!r} is not in the active candidate list."
+                )
+            }
 
     if action in {"NEW", "UPDATE", "MERGE"}:
         memory = decision.get("memory") or gate.get("memory")

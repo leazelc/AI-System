@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "description": "个人记忆问答准确率试验集",
+  "cases": [
+    {
+      "name": "本地 AI 模型偏好",
+      "query": "我选本地 AI 时最在意哪些方面？",
+      "expected_answerable": true,
+      "required_answer_terms": [
+        "实际运行体验",
+        "长期可维护性"
+      ],
+      "evidence_file": "mem_20261007_094401_644218.md"
+    },
+    {
+      "name": "电脑预算",
+      "query": "我买电脑最多能花多少钱？",
+      "expected_answerable": true,
+      "required_answer_terms": [
+        "2万元"
+      ],
+      "evidence_file": "mem_20261007_122001_277623.md"
+    },
+    {
+      "name": "电脑硬件偏好",
+      "query": "组装电脑时，我最在乎哪些硬件？",
+      "expected_answerable": true,
+      "required_answer_terms": [
+        "SSD",
+        "显存"
+      ],
+      "evidence_file": "mem_20261007_133914_853095.md"
+    },
+    {
+      "name": "本科院校计划",
+      "query": "我计划去莫斯科的哪所大学读本科？",
+      "expected_answerable": true,
+      "required_answer_terms": [
+        "莫斯科国立师范大学"
+      ],
+      "evidence_file": "mem_20261009_114847_521874.md"
+    },
+    {
+      "name": "无答案：咖啡偏好",
+      "query": "我最喜欢喝哪种咖啡？",
+      "expected_answerable": false,
+      "required_answer_terms": [],
+      "evidence_file": null
+    }
+  ]
+}

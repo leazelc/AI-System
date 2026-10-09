@@ -63,7 +63,7 @@ def search(query, limit=5):
     candidates = [
         item
         for item in semantic_search(query, limit=limit)
-        if item["score"] >= 0.64
+        if item["score"] >= 0.35
     ]
 
     results = []
@@ -85,6 +85,7 @@ def search(query, limit=5):
             continue
 
         results.append({
+            "id": item["id"],
             "score": item["score"],
             "path": path,
             "metadata": metadata,
