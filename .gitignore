@@ -1,0 +1,24 @@
+# Personal memory data
+memory/**/*.md
+memory/**/*.sqlite
+memory/**/*.db
+memory/**/*.json
+memory/**/*.jsonl
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python generated files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editor and operating system files
+.DS_Store
+.vscode/
+.idea/
