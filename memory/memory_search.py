@@ -42,7 +42,7 @@ def parse_memory(path):
     return metadata, content
 
 
-def search(query, limit=5):
+def search(query, limit=10, min_score=None):
     """
     使用 Nomic 语义检索长期记忆。
 
@@ -60,10 +60,19 @@ def search(query, limit=5):
         ]
     """
 
+    if min_score is None:
+        import os
+        try:
+            min_score = float(os.environ.get("AI_MEMORY_MIN_SCORE", "0.45"))
+        except ValueError:
+            min_score = 0.45
+
+        min_score = max(0.0, min(1.0, min_score))
+
     candidates = [
         item
         for item in semantic_search(query, limit=limit)
-        if item["score"] >= 0.35
+        if item["score"] >= min_score
     ]
 
     results = []

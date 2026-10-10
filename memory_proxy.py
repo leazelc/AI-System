@@ -1,3 +1,4 @@
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import json
@@ -11,6 +12,7 @@ MEMORY_ROOT = BASE / "memory"
 sys.path.insert(0, str(MEMORY_ROOT))
 
 from memory_search import search
+from answer_evidence_gate import evaluate_evidence, refusal_message
 from memory_writer_v2 import execute as write_memory
 
 
@@ -50,61 +52,51 @@ def get_latest_user_message(messages):
     return ""
 
 
-def build_memory_context(question):
+def _memory_min_score():
     try:
-        memories = search(question, limit=5)
-    except Exception as e:
-        print(f"[Memory Proxy] Memory search error: {e}")
+        value = float(os.environ.get("AI_MEMORY_MIN_SCORE", "0.45"))
+    except (TypeError, ValueError):
+        value = 0.45
+    return max(0.0, min(1.0, value))
+
+
+def build_memory_context(question):
+    """Build evidence-grounded context and reject unsupported memory answers."""
+    try:
+        memories = search(question, limit=10)
+    except Exception as exc:
+        print(f"[Memory Proxy] Memory retrieval failed: {exc}")
         memories = []
 
-    if not memories:
-        memory_text = "没有检索到相关长期记忆。"
-    else:
-        blocks = []
+    decision = evaluate_evidence(
+        question,
+        memories,
+        min_score=_memory_min_score(),
+    )
 
-        for i, item in enumerate(memories, 1):
-            metadata = item.get("metadata", {})
-            content = item.get("content", "")
+    if not decision["answerable_from_retrieval"]:
+        return (
+            "【个人记忆证据门控】\n"
+            "当前检索没有找到达到最低分数阈值的有效记忆。\n"
+            "如果用户询问的是其个人经历、偏好、计划或历史信息，"
+            "必须明确说明现有记忆证据不足，不得猜测或编造。\n"
+            "如果问题是一般知识问题，可以正常回答，但不得把猜测说成用户的个人记忆。"
+        )
 
-            blocks.append(
-                f"""--- 记忆 {i} ---
-类型: {metadata.get("type", "unknown")}
-相关度: {item.get("score", 0):.4f}
+    blocks = []
+    for item in decision["evidence"]:
+        blocks.append(
+            f"[记忆证据 | score={item['score']:.3f}]\n"
+            f"{item['content']}"
+        )
 
-{content}"""
-            )
-
-        memory_text = "\n\n".join(blocks)
-
-    print(f"[Memory Proxy] Memories found: {len(memories)}")
-
-    return f"""你是我的本地 AI 助手。
-
-下面的信息来自我的本地长期记忆系统。
-这些内容是已经保存并确认过的用户长期信息，不是需要你猜测或重新询问的信息。
-
-========== 本地长期记忆 ==========
-{memory_text}
-========== 本地长期记忆结束 ==========
-
-使用长期记忆时必须遵守：
-
-1. 如果用户的问题直接询问某条长期记忆中的事实，直接使用该记忆回答。
-2. 不要因为记忆内容已经存在，就反过来询问用户同样的信息。
-3. 长期记忆中的具体数字、预算、设备、偏好、限制和长期决定，应视为用户已经提供并确认过的信息。
-4. 只有当当前问题与某条记忆明显相关时才使用它。
-5. 不相关的记忆不要影响回答。
-6. 不要把“电脑预算上限为2万元人民币”理解成让用户重新提供预算；如果用户问电脑预算是多少，就直接回答2万元人民币。
-7. 不要编造长期记忆中不存在的信息。
-8. 不要向用户暴露 memory ID、SQLite、embedding、similarity 或内部实现。
-9. 你运行在用户本地电脑上。
-
-现在请直接回答用户的问题。
-
-用户当前问题：
-{question}
+    instructions = """【个人长期记忆问答规则】
+仅将以下检索内容作为个人记忆证据。
+证据没有明确支持的个人事实，不得自行补全或猜测。
+若问题询问个人信息而证据不足，明确说明不知道。
+一般知识问题仍可正常回答，但必须区分一般知识与个人记忆。
 """
-
+    return instructions + "\n\n" + "\n\n".join(blocks)
 
 def inject_memory(messages, memory_context):
     new_messages = [dict(message) for message in messages]
