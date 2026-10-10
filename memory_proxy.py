@@ -152,10 +152,49 @@ def inject_memory(messages, memory_context):
 
 
 def call_writer(question):
+    import json
+    import traceback
+    from datetime import datetime
+    from pathlib import Path
+
+    log_dir = Path.home() / "AI-System" / "logs"
+    event_file = log_dir / "memory_writer_events.jsonl"
+    error_file = log_dir / "memory_writer_errors.jsonl"
+
+    def append_event(path, event):
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    print("[Memory Proxy] Running Memory Writer...")
     try:
-        print("[Memory Proxy] Running Memory Writer...")
         write_memory(question)
+        append_event(event_file, {
+            "timestamp": datetime.now().astimezone().isoformat(),
+            "component": "memory_writer",
+            "status": "success",
+        })
     except Exception as e:
+        event = {
+            "timestamp": datetime.now().astimezone().isoformat(),
+            "component": "memory_writer",
+            "status": "error",
+            "error_type": type(e).__name__,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }
+        try:
+            append_event(error_file, event)
+            append_event(event_file, {
+                "timestamp": event["timestamp"],
+                "component": "memory_writer",
+                "status": "error",
+                "error_type": event["error_type"],
+                "error": event["error"],
+            })
+            print(f"[Memory Proxy] Error details saved locally: {error_file}")
+        except Exception as log_error:
+            print(f"[Memory Proxy] Failed to write error log: {log_error}")
         print(f"[Memory Proxy] Writer error: {e}")
 
 

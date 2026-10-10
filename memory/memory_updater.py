@@ -34,6 +34,14 @@ IGNORE：
 - 没有增加任何实际信息
 - 没有改变行为规则
 
+重要的去重边界：
+- 只有已有记忆确实表达了同一个事实，才能判定 IGNORE。
+- 同一项目、相同主题、相似关键词，不代表事实重复。
+- 新增独立的技术配置、工具、模型、接口、路径或架构信息，应判定为 NEW。
+- 新信息补充了旧记忆的条件、范围或规则，应判定为 UPDATE 或 MERGE。
+- 如果无法确认是否重复，优先保留新事实，判定为 NEW；不得仅因不确定而忽略。
+- 不得将模型生成的回答当作用户亲自提供的事实。
+
 UPDATE：
 - 改变旧记忆的政策或偏好
 - 增加新的限制条件
@@ -249,6 +257,22 @@ Memory Gate 判断：
 
 {candidate_text if candidate_text else "没有找到相关 active 记忆。"}
 
+【新增长期事实规则】
+1. 用户提供了可独立验证的新项目事实（例如模型名称、技术配置、工具选择或架构决定），即使已有记忆属于同一项目，也不能仅因主题相同而忽略。
+2. 新事实与旧记忆不冲突、且旧记忆没有包含该事实时，优先 NEW；确实补充或修正同一条事实时，才考虑 UPDATE 或 MERGE。
+3. 不得把模型自行生成的回答当作用户确认的事实。
+4. 只有确认信息重复或没有长期价值时才选择 IGNORE。
+
+【语义去重与事实保护规则】
+1. 必须比较实际含义，不能只比较文字是否相同。
+2. 新信息与旧记忆含义相同、只是换了说法：IGNORE，不创建重复记忆。
+3. 新信息提供独立的新事实，即使属于同一项目，也应 NEW；不能仅因主题相同就忽略。
+4. UPDATE 只用于修正或替换同一对象的既有事实，不能用来覆盖无关事实。
+5. MERGE 仅用于同一对象、同一主题下互补且适合长期共同保存的信息；合并时必须保留所有独立事实。
+6. 不确定两条记忆是否描述同一事实时，不要强行 UPDATE 或 MERGE；独立事实优先 NEW。
+7. 用户明确提供的技术名称、配置、版本和架构信息必须准确保留，不得自行改写具体名称。
+8. Gate 判断值得保存，不代表必须创建新记忆；仍须进行语义去重。
+
 请判断新信息应该：
 
 NEW / UPDATE / MERGE / IGNORE
@@ -301,6 +325,27 @@ NEW / UPDATE / MERGE / IGNORE
         }
 
     action = decision.get("action", "IGNORE")
+
+    # Reliability fallback:
+    # Do not silently discard a Gate-approved long-term fact
+    # merely because the Updater chose IGNORE.
+    if (
+        action == "IGNORE"
+        and not candidates
+        and gate.get("should_remember") is True
+        and isinstance(gate.get("memory"), str)
+        and gate["memory"].strip()
+    ):
+        proposed_memory = gate["memory"].strip()
+        existing_text = candidate_text.casefold()
+        if proposed_memory.casefold() not in existing_text:
+            action = "NEW"
+            decision["memory"] = proposed_memory
+            decision["target_id"] = None
+            decision["reason"] = (
+                "Fallback: Gate approved a long-term memory, "
+                "and its exact text was not found in active candidates."
+            )
 
     if action not in {
         "NEW",
