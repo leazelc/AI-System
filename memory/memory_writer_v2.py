@@ -384,75 +384,56 @@ updated_at: {now_date()}
 
 
 def execute(user_input):
-    print("Running Memory Writer V2...\n")
+    print("Running Memory Writer V2...\\n")
 
     decision = decide_update(user_input)
 
     if not decision:
         print("[ERROR] No decision returned.")
-        return
+        return {"status": "error", "action": "UNKNOWN"}
 
     is_valid, reason = validate_decision(decision)
     if not is_valid:
         print(f"[REJECTED] Invalid memory decision: {reason}")
         print("No candidate or active memory was written.")
-        return
+        return {"status": "error", "action": "REJECTED"}
 
     action = decision.get("action")
-
     print(f"Action: {action}")
-
-    # Validate update targets before creating candidate files.
-    if action in ("UPDATE", "MERGE"):
-        target_id = decision.get("target_id")
-
-        if not find_memory_file(target_id):
-            print(
-                f"[REJECTED] Target memory does not exist: {target_id}"
-            )
-            print("No candidate or active memory was written.")
-            return
-
-    candidate_path = None
-
-    if action in ("NEW", "UPDATE", "MERGE"):
-        candidate_path = write_candidate({
-            "type": decision.get("type"),
-            "importance": decision.get("importance"),
-            "confidence": decision.get("confidence"),
-            "memory": decision.get("memory"),
-        })
 
     if action == "IGNORE":
         print("Nothing written.")
-        return
+        return {"status": "ignored", "action": "IGNORE"}
+
+    if action not in ("NEW", "UPDATE", "MERGE"):
+        print(f"[ERROR] Unknown action: {action}")
+        return {"status": "error", "action": action or "UNKNOWN"}
+
+    target_id = decision.get("target_id")
+    if action in ("UPDATE", "MERGE") and not find_memory_file(target_id):
+        print(f"[REJECTED] Target memory does not exist: {target_id}")
+        print("No candidate or active memory was written.")
+        return {"status": "error", "action": "REJECTED"}
+
+    if not decision.get("memory"):
+        print(f"[ERROR] {action} without memory content.")
+        return {"status": "error", "action": action}
+
+    candidate_path = write_candidate({
+        "type": decision.get("type"),
+        "importance": decision.get("importance"),
+        "confidence": decision.get("confidence"),
+        "memory": decision.get("memory"),
+    })
 
     if action == "NEW":
-        if not decision.get("memory"):
-            print("[ERROR] NEW without memory content.")
-            return
-
         core_path = write_new_memory({
             "type": decision.get("type"),
             "importance": decision.get("importance"),
             "confidence": decision.get("confidence"),
             "memory": decision.get("memory"),
         })
-
-        if core_path and candidate_path:
-            archive_candidate(candidate_path)
-
-    elif action in ("UPDATE", "MERGE"):
-        target_id = decision.get("target_id")
-
-        if not target_id:
-            print(f"[ERROR] {action} without target_id.")
-            return
-
-        if not decision.get("memory"):
-            print(f"[ERROR] {action} without memory content.")
-            return
-
+    else:
         core_path = update_memory(
             target_id,
             {
@@ -463,25 +444,35 @@ def execute(user_input):
             }
         )
 
-        if core_path and candidate_path:
+    if not core_path:
+        return {"status": "error", "action": action}
+
+    if candidate_path:
+        try:
             archive_candidate(candidate_path)
+        except Exception as exc:
+            print(f"[WARNING] Candidate archival failed: {exc}")
 
-    else:
-        print(f"[ERROR] Unknown action: {action}")
-        return
+    memory_id = core_path.stem if action == "NEW" else target_id
 
-    # Only synchronize indexes after a successful NEW / UPDATE / MERGE.
-    # IGNORE returns above and therefore never triggers synchronization.
+    # Synchronize both indexes BEFORE reporting success to the proxy.
     indexes_synced = sync_indexes()
-
     if not indexes_synced:
         print(
-            "\n[WARNING] Memory was written, but index synchronization failed. "
-            "The memory file may exist while its indexes are outdated."
+            "\\n[WARNING] Memory was written, but index synchronization failed."
         )
-        return
+        return {
+            "status": "index_sync_failed",
+            "action": action,
+            "memory_ids": [memory_id],
+        }
 
-    print("\nWriter operation completed.")
+    print("\\nWriter operation completed.")
+    return {
+        "status": "success",
+        "action": action,
+        "memory_ids": [memory_id],
+    }
 
 
 if __name__ == "__main__":

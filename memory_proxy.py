@@ -168,11 +168,14 @@ def call_writer(question):
 
     print("[Memory Proxy] Running Memory Writer...")
     try:
-        write_memory(question)
+        result = write_memory(question)
+        succeeded = isinstance(result, dict) and result.get("status") == "success"
         append_event(event_file, {
             "timestamp": datetime.now().astimezone().isoformat(),
             "component": "memory_writer",
-            "status": "success",
+            "status": "success" if succeeded else "not_confirmed",
+            "action": result.get("action", "UNKNOWN") if isinstance(result, dict) else "UNKNOWN",
+            "memory_ids": result.get("memory_ids", []) if isinstance(result, dict) else [],
         })
     except Exception as e:
         event = {
