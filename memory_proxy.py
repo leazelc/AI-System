@@ -13,6 +13,7 @@ sys.path.insert(0, str(MEMORY_ROOT))
 
 from memory_search import search
 from answer_evidence_gate import evaluate_evidence, refusal_message
+from answer_validator import validate_answer, AnswerValidationError
 from memory_writer_v2 import execute as write_memory
 
 
@@ -60,8 +61,8 @@ def _memory_min_score():
     return max(0.0, min(1.0, value))
 
 
-def build_memory_context(question):
-    """Build evidence-grounded context and reject unsupported memory answers."""
+def build_memory_context(question, return_details=False):
+    """Build memory context and optionally return the exact gated evidence."""
     try:
         memories = search(question, limit=10)
     except Exception as exc:
@@ -74,29 +75,54 @@ def build_memory_context(question):
         min_score=_memory_min_score(),
     )
 
+    evidence_text = "\\n\\n".join(
+        item["content"] for item in decision["evidence"]
+    )
+
     if not decision["answerable_from_retrieval"]:
-        return (
-            "【个人记忆证据门控】\n"
-            "当前检索没有找到达到最低分数阈值的有效记忆。\n"
+        context = (
+            "【个人记忆证据门控】\\n"
+            "当前检索没有找到达到最低分数阈值的有效记忆。\\n"
             "如果用户询问的是其个人经历、偏好、计划或历史信息，"
-            "必须明确说明现有记忆证据不足，不得猜测或编造。\n"
+            "必须明确说明现有记忆证据不足，不得猜测或编造。\\n"
             "如果问题是一般知识问题，可以正常回答，但不得把猜测说成用户的个人记忆。"
         )
+    else:
+        blocks = []
+        for item in decision["evidence"]:
+            blocks.append(
+                f"[记忆证据 | score={item['score']:.3f}]\\n"
+                f"{item['content']}"
+            )
 
-    blocks = []
-    for item in decision["evidence"]:
-        blocks.append(
-            f"[记忆证据 | score={item['score']:.3f}]\n"
-            f"{item['content']}"
-        )
-
-    instructions = """【个人长期记忆问答规则】
+        instructions = """【个人长期记忆问答规则】
 仅将以下检索内容作为个人记忆证据。
 证据没有明确支持的个人事实，不得自行补全或猜测。
 若问题询问个人信息而证据不足，明确说明不知道。
 一般知识问题仍可正常回答，但必须区分一般知识与个人记忆。
 """
-    return instructions + "\n\n" + "\n\n".join(blocks)
+        context = instructions + "\\n\\n" + "\\n\\n".join(blocks)
+
+    if return_details:
+        return context, evidence_text, decision["answerable_from_retrieval"]
+
+    return context
+
+
+def is_personal_memory_question(question):
+    """Heuristic identifying questions about the user's own remembered facts."""
+    markers = (
+        "之前", "以前", "上次", "曾经", "记得", "聊过", "说过",
+        "我计划", "我打算", "我决定", "我考虑", "我选择",
+        "我的计划", "我的偏好", "我的配置", "我的专业",
+        "我的学校", "我之前", "我当时", "我们之前",
+        "what did I", "what was my", "what have I",
+        "what do you remember", "what did we discuss",
+        "my previous plan", "my preferences",
+    )
+    normalized = question.casefold()
+    return any(marker.casefold() in normalized for marker in markers)
+
 
 def inject_memory(messages, memory_context):
     new_messages = [dict(message) for message in messages]
@@ -229,8 +255,8 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                 f'[Memory Proxy] User: {question}'
             )
 
-            memory_context = build_memory_context(
-                question
+            memory_context, memory_evidence, evidence_available = (
+                build_memory_context(question, return_details=True)
             )
 
             upstream_body = dict(body)
@@ -299,7 +325,9 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                 self.handle_non_stream(
                     upstream,
                     requested_model,
-                    question
+                    question,
+                    memory_evidence,
+                    evidence_available,
                 )
 
         except Exception as e:
@@ -321,18 +349,56 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
         self,
         upstream,
         requested_model,
-        question
+        question,
+        memory_evidence="",
+        evidence_available=False,
     ):
         with upstream:
             result = json.load(upstream)
 
         result["model"] = requested_model
 
-        self.send_json(
-            200,
-            result
-        )
+        if is_personal_memory_question(question):
+            choices = result.get("choices", [])
+            if not choices or not isinstance(choices[0].get("message"), dict):
+                self.send_json(502, {
+                    "error": {
+                        "message": "模型响应格式异常，无法安全处理个人记忆问题。",
+                        "type": "answer_validation_error",
+                    }
+                })
+                return
 
+            if not evidence_available or not memory_evidence.strip():
+                choices[0]["message"]["content"] = (
+                    "我在现有记忆中没有找到足够的证据来可靠回答这个问题。"
+                )
+            else:
+                answer = choices[0]["message"].get("content")
+                try:
+                    validation = validate_answer(memory_evidence, answer)
+                except Exception as exc:
+                    print(f"[Memory Proxy] Answer validation failed: {exc}")
+                    self.send_json(502, {
+                        "error": {
+                            "message": "个人记忆回答未能通过安全校验，请重试。",
+                            "type": "answer_validation_error",
+                        }
+                    })
+                    return
+
+                if validation["verdict"] != "PASS":
+                    print(
+                        "[Memory Proxy] Answer blocked by validator: "
+                        + validation["verdict"]
+                        + " - "
+                        + validation["reason"]
+                    )
+                    choices[0]["message"]["content"] = (
+                        "根据本次检索到的记忆，无法确认这个问题的答案。"
+                    )
+
+        self.send_json(200, result)
         call_writer(question)
 
     def handle_stream(
