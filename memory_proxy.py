@@ -319,7 +319,9 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                 self.handle_stream(
                     upstream,
                     requested_model,
-                    question
+                    question,
+                    memory_evidence,
+                    evidence_available,
                 )
             else:
                 self.handle_non_stream(
@@ -405,90 +407,108 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
         self,
         upstream,
         requested_model,
-        question
+        question,
+        memory_evidence="",
+        evidence_available=False,
     ):
-        self.send_response(200)
-
-        self.send_header(
-            "Content-Type",
-            "text/event-stream; charset=utf-8"
-        )
-        self.send_header(
-            "Cache-Control",
-            "no-cache"
-        )
-        self.send_header(
-            "Connection",
-            "close"
-        )
-        self.send_header(
-            "X-Accel-Buffering",
-            "no"
-        )
-
-        self.end_headers()
-
+        raw_lines = []
         collected_text = []
+        saw_done = False
 
         try:
             while True:
                 line = upstream.readline()
-
                 if not line:
                     break
 
-                text = line.decode(
-                    "utf-8",
-                    errors="replace"
-                )
+                decoded = line.decode("utf-8", errors="replace")
 
-                if text.startswith("data: "):
-                    payload = text[6:].strip()
+                if decoded.startswith("data: "):
+                    payload = decoded[6:].strip()
 
-                    if payload != "[DONE]":
-                        try:
-                            chunk = json.loads(
-                                payload
-                            )
+                    if payload == "[DONE]":
+                        saw_done = True
+                        continue
 
-                            choices = chunk.get(
-                                "choices",
-                                []
-                            )
+                    try:
+                        chunk = json.loads(payload)
+                        choices = chunk.get("choices", [])
+                        if choices:
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content")
+                            if isinstance(content, str) and content:
+                                collected_text.append(content)
+                    except (json.JSONDecodeError, AttributeError, TypeError):
+                        pass
 
-                            if choices:
-                                delta = choices[0].get(
-                                    "delta",
-                                    {}
-                                )
+                raw_lines.append(line)
 
-                                content = delta.get(
-                                    "content"
-                                )
+            if not saw_done:
+                self.send_json(502, {
+                    "error": {
+                        "message": "上游流式响应未正常结束，请重试。",
+                        "type": "upstream_stream_error",
+                    }
+                })
+                return
 
-                                if content:
-                                    collected_text.append(
-                                        content
-                                    )
+            if is_personal_memory_question(question):
+                if not evidence_available or not memory_evidence.strip():
+                    verdict = "BLOCK"
+                else:
+                    try:
+                        validation = validate_answer(
+                            memory_evidence,
+                            "".join(collected_text),
+                        )
+                        verdict = validation.get("verdict", "UNCERTAIN")
+                    except Exception as exc:
+                        print(f"[Memory Proxy] Stream validation failed: {exc}")
+                        self.send_json(502, {
+                            "error": {
+                                "message": "个人记忆回答未能通过安全校验，请重试。",
+                                "type": "answer_validation_error",
+                            }
+                        })
+                        return
 
-                        except json.JSONDecodeError:
-                            pass
+                if verdict != "PASS":
+                    refusal = (
+                        "我在现有记忆中没有找到足够的证据来可靠回答这个问题。"
+                        if verdict == "BLOCK"
+                        else "根据本次检索到的记忆，无法确认这个问题的答案。"
+                    )
+                    raw_lines = [
+                        (
+                            "data: " + json.dumps({
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {
+                                        "role": "assistant",
+                                        "content": refusal,
+                                    },
+                                    "finish_reason": None,
+                                }]
+                            }, ensure_ascii=False) + "\n\n"
+                        ).encode("utf-8")
+                    ]
 
-                    else:
-                        call_writer(question)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
 
-                        text = "data: [DONE]\n\n"
+            for line in raw_lines:
+                self.wfile.write(line)
 
-                self.wfile.write(
-                    text.encode("utf-8")
-                )
-                self.wfile.flush()
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            call_writer(question)
 
         except BrokenPipeError:
-            print(
-                "[Memory Proxy] Client disconnected."
-            )
-
+            print("[Memory Proxy] Client disconnected.")
         finally:
             try:
                 upstream.close()

@@ -118,3 +118,120 @@ class TestMemoryProxyAnswerValidation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMemoryProxyStreamingValidation(unittest.TestCase):
+    def setUp(self):
+        import io
+        from unittest.mock import patch
+
+        self.io = io
+        self.patch = patch
+
+        self.handler_class = next(
+            obj for obj in vars(memory_proxy).values()
+            if isinstance(obj, type) and hasattr(obj, "handle_stream")
+        )
+
+        self.handler = self.handler_class.__new__(self.handler_class)
+        self.output = io.BytesIO()
+        self.handler.wfile = self.output
+
+        self.status_codes = []
+        self.headers = []
+        self.json_errors = []
+
+        self.handler.send_response = lambda status: self.status_codes.append(status)
+        self.handler.send_header = lambda key, value: self.headers.append((key, value))
+        self.handler.end_headers = lambda: None
+        self.handler.send_json = lambda status, body: self.json_errors.append(
+            (status, body)
+        )
+
+        import json
+        payload = json.dumps(
+            {"choices": [{"delta": {"content": "测试答案"}}]},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.upstream = io.BytesIO(
+            b"data: " + payload + b"\n\n"
+            + b"data: [DONE]\n\n"
+        )
+
+        self.writer_patch = patch(
+            "memory_proxy.call_writer"
+        ).start()
+        self.addCleanup(patch.stopall)
+
+    def run_stream(self, question="我之前说过什么？",
+                   evidence="已有记忆证据", available=True):
+        self.handler.handle_stream(
+            self.upstream,
+            "test-model",
+            question,
+            evidence,
+            available,
+        )
+        return self.output.getvalue().decode("utf-8")
+
+    def test_pass_preserves_original_stream_answer(self):
+        with self.patch.object(
+            memory_proxy, "is_personal_memory_question", return_value=True
+        ), self.patch.object(
+            memory_proxy, "validate_answer",
+            return_value={"verdict": "PASS", "reason": "有证据支持"}
+        ) as validator:
+            result = self.run_stream()
+
+        validator.assert_called_once_with("已有记忆证据", "测试答案")
+        self.assertIn("测试答案", result)
+        self.assertEqual(self.status_codes, [200])
+
+    def test_flag_blocks_original_answer(self):
+        with self.patch.object(
+            memory_proxy, "is_personal_memory_question", return_value=True
+        ), self.patch.object(
+            memory_proxy, "validate_answer",
+            return_value={"verdict": "FLAG", "reason": "无证据支持"}
+        ):
+            result = self.run_stream()
+
+        self.assertNotIn("测试答案", result)
+        self.assertIn("无法确认", result)
+
+    def test_missing_evidence_blocks_answer(self):
+        with self.patch.object(
+            memory_proxy, "is_personal_memory_question", return_value=True
+        ), self.patch.object(
+            memory_proxy, "validate_answer"
+        ) as validator:
+            result = self.run_stream(evidence="", available=False)
+
+        validator.assert_not_called()
+        self.assertNotIn("测试答案", result)
+        self.assertIn("没有找到足够的证据", result)
+
+    def test_validator_exception_fails_closed(self):
+        with self.patch.object(
+            memory_proxy, "is_personal_memory_question", return_value=True
+        ), self.patch.object(
+            memory_proxy, "validate_answer",
+            side_effect=RuntimeError("模拟异常")
+        ):
+            self.run_stream()
+
+        self.assertEqual(self.json_errors[0][0], 502)
+        self.assertEqual(self.status_codes, [])
+        self.assertEqual(self.output.getvalue(), b"")
+
+    def test_general_question_skips_memory_validation(self):
+        with self.patch.object(
+            memory_proxy, "is_personal_memory_question", return_value=False
+        ), self.patch.object(
+            memory_proxy, "validate_answer"
+        ) as validator:
+            result = self.run_stream(question="什么是机器学习？")
+
+        validator.assert_not_called()
+        self.assertIn("测试答案", result)
+        self.assertEqual(self.status_codes, [200])
