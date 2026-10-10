@@ -5,6 +5,51 @@ def _build_plan(issue):
     """Build a conservative, non-executable repair proposal."""
     problem = str(issue.get("problem", "未知问题"))
     memory_id = issue.get("memory_id") or issue.get("id")
+
+    # Stable codes take precedence over localized problem descriptions.
+    # Unknown codes remain manual-only and never fall back to text matching.
+    if "code" in issue and issue["code"] is not None:
+        code = str(issue["code"]).strip()
+
+        coded_plans = {
+            "EMBEDDING_HASH_MISMATCH": (
+                "核对 Markdown 正文及其元数据；确认源内容正确后，"
+                "再考虑重新生成对应向量并复检。当前仅预览，不执行。",
+                "medium",
+            ),
+        }
+
+        proposal = coded_plans.get(code)
+
+        if proposal is None:
+            return {
+                "memory_id": memory_id,
+                "problem": problem,
+                "related_paths": list(issue.get("related_paths") or []),
+                "source_check": issue.get("check", "未指定"),
+                "severity": issue.get("severity", issue.get("level", "error")),
+                "proposed_action": (
+                    "遇到未知问题代码。请人工核对问题、源文件和相关索引；"
+                    "确认原因前不要执行修复。"
+                ),
+                "risk": "high",
+                "manual_review_required": True,
+                "executed": False,
+            }
+
+        action, risk = proposal
+
+        return {
+            "memory_id": memory_id,
+            "problem": problem,
+            "related_paths": list(issue.get("related_paths") or []),
+            "source_check": issue.get("check", "未指定"),
+            "severity": issue.get("severity", issue.get("level", "error")),
+            "proposed_action": action,
+            "risk": risk,
+            "manual_review_required": True,
+            "executed": False,
+        }
     paths = list(issue.get("related_paths") or [])
 
     base = {

@@ -139,5 +139,53 @@ class TestMemoryDiagnostics(unittest.TestCase):
         self.assertFalse(report["issues"][0]["repairable"])
 
 
+    def test_stable_code_classifies_issue_independently_of_chinese_text(self):
+        raw_report = {
+            "checks": [],
+            "issues": [
+                {
+                    "level": "error",
+                    "code": "EMBEDDING_HASH_MISMATCH",
+                    "id": "memory-code-001",
+                    "problem": "描述文字已经改变",
+                    "path": "/tmp/memory/preferences/example.md",
+                    "check": "向量记录一致性",
+                }
+            ],
+            "error_count": 1,
+            "warning_count": 0,
+        }
+
+        report = build_diagnostic_report(raw_report)
+        issue = report["issues"][0]
+
+        self.assertEqual(issue["code"], "EMBEDDING_HASH_MISMATCH")
+        self.assertTrue(issue["repairable"])
+        self.assertTrue(issue["recommendation"])
+
+    def test_unknown_stable_code_is_never_assumed_repairable(self):
+        raw_report = {
+            "checks": [],
+            "issues": [
+                {
+                    "level": "error",
+                    "code": "UNRECOGNIZED_FUTURE_CODE",
+                    "id": "memory-code-002",
+                    "problem": "正文哈希与向量索引不一致",
+                    "path": "/tmp/memory/preferences/example.md",
+                    "check": "未知检查",
+                }
+            ],
+            "error_count": 1,
+            "warning_count": 0,
+        }
+
+        report = build_diagnostic_report(raw_report)
+        issue = report["issues"][0]
+
+        self.assertEqual(issue["code"], "UNRECOGNIZED_FUTURE_CODE")
+        self.assertFalse(issue["repairable"])
+
+
 if __name__ == "__main__":
     unittest.main()

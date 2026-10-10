@@ -11,8 +11,30 @@ from memory.memory_consistency import (
 
 
 def _classify_issue(issue):
-    """Return a conservative recommendation and repairability assessment."""
+    """Classify by stable code when available, with legacy text compatibility."""
     problem = str(issue.get("problem", "未知问题"))
+
+    # Explicit codes take precedence over localized problem descriptions.
+    # Unknown codes remain manual-only and never fall back to text matching.
+    if "code" in issue and issue["code"] is not None:
+        code = str(issue["code"]).strip()
+
+        coded_recommendations = {
+            "EMBEDDING_HASH_MISMATCH": (
+                "核对 Markdown 正文是否为最新版本；确认内容正确后，"
+                "再考虑重新生成对应向量，并在修复后重新检查。",
+                True,
+            ),
+        }
+
+        return coded_recommendations.get(
+            code,
+            (
+                "遇到未知问题代码。请人工核对问题、源文件和相关索引；"
+                "确认原因前不要自动修改。",
+                False,
+            ),
+        )
 
     # Duplicate IDs require a human to determine which memory is authoritative.
     if "多个 Markdown 文件使用相同 ID" in problem:

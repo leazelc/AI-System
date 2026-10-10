@@ -280,5 +280,27 @@ class TestMemoryRepairPreview(unittest.TestCase):
                 self.assertFalse(plan["executed"])
 
 
+    def test_stable_code_selects_plan_independently_of_problem_text(self):
+        report = {
+            "issues": [
+                {
+                    "code": "EMBEDDING_HASH_MISMATCH",
+                    "problem": "描述文字已经改变",
+                    "memory_id": "memory-code-003",
+                    "related_paths": ["/tmp/memory/preferences/example.md"],
+                    "severity": "error",
+                }
+            ]
+        }
+
+        preview = build_repair_preview(report)
+        plan = preview["plans"][0]
+
+        self.assertEqual(plan["memory_id"], "memory-code-003")
+        self.assertEqual(plan["risk"], "medium")
+        self.assertTrue(plan["manual_review_required"])
+        self.assertFalse(plan["executed"])
+
+
 if __name__ == "__main__":
     unittest.main()

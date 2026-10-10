@@ -121,6 +121,13 @@ class TestMemoryConsistency(unittest.TestCase):
             any("哈希" in issue["problem"] for issue in issues),
             issues,
         )
+        self.assertTrue(
+            any(
+                issue.get("code") == "EMBEDDING_HASH_MISMATCH"
+                for issue in issues
+            ),
+            f"哈希不一致问题缺少正确的稳定代码：{issues}",
+        )
 
     def test_missing_embedding_is_detected(self):
         with sqlite3.connect(self.embedding_db) as conn:

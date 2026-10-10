@@ -392,6 +392,7 @@ def check_embedding_consistency(
 
         if current_hash != row["content_hash"]:
             issues.append({
+                "code": "EMBEDDING_HASH_MISMATCH",
                 "level": "error",
                 "id": memory_id,
                 "problem": "正文哈希与向量索引不一致，向量可能已过期",
