@@ -5,6 +5,7 @@ import re
 from memory_updater import decide_update
 from memory_core import scan as scan_core
 from embedding_index import sync as sync_embeddings
+from memory import keyword_index
 from memory_validation import validate_decision
 
 
@@ -66,7 +67,7 @@ def archive_candidate(path):
 
 def sync_indexes():
     """
-    Synchronize SQLite metadata and semantic indexes
+    Synchronize metadata, keyword, and semantic indexes
     after a successful memory write.
     """
     print("\nSyncing memory indexes...")
@@ -76,6 +77,16 @@ def sync_indexes():
         print("[CORE] SQLite metadata index synchronized.")
     except Exception as e:
         print(f"[CORE ERROR] {e}")
+        return False
+
+    try:
+        keyword_count = keyword_index.rebuild()
+        print(
+            f"[KEYWORD] Keyword index synchronized "
+            f"({keyword_count} active memories)."
+        )
+    except Exception as e:
+        print(f"[KEYWORD ERROR] {e}")
         return False
 
     try:

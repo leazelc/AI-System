@@ -10,7 +10,7 @@ from memory_search import search
 
 DATASET = (
     Path(sys.argv[1]).expanduser()
-    if len(sys.argv) > 1
+    if __name__ == "__main__" and len(sys.argv) > 1
     else ROOT / "tests/retrieval_benchmark_extended.json"
 )
 CASES = json.loads(DATASET.read_text(encoding="utf-8"))

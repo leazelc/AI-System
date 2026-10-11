@@ -25,8 +25,17 @@ with tempfile.TemporaryDirectory(prefix="hybrid_filter_") as temp:
     shutil.copy2(source_db, temp_db)
     keyword_index.INDEX_DB = temp_db
 
-    if keyword_index.rebuild() != 5:
-        raise RuntimeError("关键词索引数量异常")
+    indexed_count = keyword_index.rebuild()
+    with sqlite3.connect(temp_db) as conn:
+        active_count = conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE status = 'active'"
+        ).fetchone()[0]
+
+    if indexed_count != active_count:
+        raise RuntimeError(
+            f"关键词索引数量异常：索引 {indexed_count} 条，"
+            f"active 记忆 {active_count} 条"
+        )
 
     results_by_case = []
 

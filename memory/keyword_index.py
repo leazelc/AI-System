@@ -73,6 +73,7 @@ def make_terms(text):
 
 def rebuild():
     conn = get_db()
+    savepoint_created = False
 
     try:
         rows = conn.execute("""
@@ -82,40 +83,61 @@ def rebuild():
         """).fetchall()
 
         documents = []
+        failures = []
 
         for memory_id, raw_path in rows:
             path = Path(raw_path)
 
             if not path.is_file():
+                failures.append(f"{memory_id}: 文件不存在 ({path})")
                 continue
 
             try:
                 body = read_body(path)
-            except (OSError, UnicodeError):
+            except (OSError, UnicodeError) as exc:
+                failures.append(f"{memory_id}: 文件读取失败 ({exc})")
                 continue
 
             documents.append((memory_id, make_terms(body)))
 
+        if failures:
+            details = "; ".join(failures[:5])
+            if len(failures) > 5:
+                details += f"; 另有 {len(failures) - 5} 个错误"
+            raise RuntimeError(
+                f"关键词索引重建中止：{len(failures)} 个 active 记忆文件无法读取。"
+                f"原索引未被清空。详情：{details}"
+            )
+
+        if len(documents) != len(rows):
+            raise RuntimeError(
+                f"关键词索引数量不一致：active {len(rows)} 条，"
+                f"可索引 {len(documents)} 条。"
+            )
+
         conn.execute("SAVEPOINT keyword_rebuild")
+        savepoint_created = True
+
         conn.execute("DELETE FROM memory_keyword_fts")
         conn.executemany("""
             INSERT INTO memory_keyword_fts (id, content)
             VALUES (?, ?)
         """, documents)
+
         conn.execute("RELEASE keyword_rebuild")
+        savepoint_created = False
         conn.commit()
 
         return len(documents)
 
     except Exception:
-        if conn.in_transaction:
+        if savepoint_created:
             conn.execute("ROLLBACK TO keyword_rebuild")
             conn.execute("RELEASE keyword_rebuild")
         raise
 
     finally:
         conn.close()
-
 
 def search(query, limit=5):
     if not query or not query.strip() or limit < 1:

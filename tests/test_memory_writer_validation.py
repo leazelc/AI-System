@@ -123,6 +123,8 @@ class TestMemoryWriterValidation(unittest.TestCase):
         with patch.object(
             memory_writer_v2, "scan_core"
         ), patch.object(
+            memory_writer_v2.keyword_index, "rebuild", return_value=13
+        ), patch.object(
             memory_writer_v2, "sync_embeddings", return_value=False
         ), redirect_stdout(output):
             result = memory_writer_v2.sync_indexes()

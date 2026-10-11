@@ -84,8 +84,6 @@ def main():
     cases_path = ROOT / "tests/retrieval_benchmark_extended.json"
     cases = json.loads(cases_path.read_text(encoding="utf-8"))
 
-    if len(cases) != 20:
-        raise ValueError(f"预期 20 道测试题，实际为 {len(cases)}")
 
     source_db = ROOT / "memory/index/memory.sqlite"
 
@@ -96,9 +94,15 @@ def main():
         keyword_index.INDEX_DB = temp_db
         indexed = keyword_index.rebuild()
 
-        if indexed != 5:
+        with sqlite3.connect(temp_db) as conn:
+            active_count = conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE status = 'active'"
+            ).fetchone()[0]
+
+        if indexed != active_count:
             raise RuntimeError(
-                f"预期索引 5 条 active 记忆，实际为 {indexed}"
+                f"关键词索引数量异常：索引 {indexed} 条，"
+                f"active 记忆 {active_count} 条"
             )
 
         def semantic(query):

@@ -119,6 +119,9 @@ def is_personal_memory_question(question):
         "what did I", "what was my", "what have I",
         "what do you remember", "what did we discuss",
         "my previous plan", "my preferences",
+        "what is my", "what are my",
+        "what's my", "what's mine",
+        "tell me my", "do you know my",
     )
     normalized = question.casefold()
     return any(marker.casefold() in normalized for marker in markers)
