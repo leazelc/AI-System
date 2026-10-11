@@ -96,6 +96,52 @@ class TestEmbeddingIndexSafety(unittest.TestCase):
         )
         self.assertIn("ERROR", output.getvalue())
 
+    def test_embedding_failure_skips_global_cleanup(self):
+        memory_file = self.memory_dir / "memory.md"
+        memory_file.write_text(
+            "---\n"
+            "id: mem_embedding_failure_cleanup\n"
+            "status: active\n"
+            "updated_at: 2026-10-09\n"
+            "---\n"
+            "需要更新的记忆内容。\n",
+            encoding="utf-8",
+        )
+
+        self.insert_old_vector(
+            "mem_embedding_failure_cleanup",
+            memory_file,
+            "旧的记忆内容。",
+        )
+
+        stale_path = self.memory_dir / "deleted_memory.md"
+        self.insert_old_vector(
+            "mem_stale",
+            stale_path,
+            "已经失效的记忆。",
+        )
+
+        output = StringIO()
+
+        with patch.object(
+            embedding_index, "MEMORY_ROOT", self.memory_dir
+        ), patch.object(
+            embedding_index, "DB_PATH", self.db_path
+        ), patch.object(
+            embedding_index,
+            "get_embedding",
+            side_effect=RuntimeError("模拟向量生成失败"),
+        ), redirect_stdout(output):
+            result = embedding_index.sync()
+
+        self.assertIs(result, False)
+        self.assertEqual(
+            self.read_vector_ids(),
+            ["mem_embedding_failure_cleanup", "mem_stale"],
+            "向量生成失败时应跳过全局清理，保留已有向量。",
+        )
+        self.assertIn("incomplete", output.getvalue().lower())
+
     def test_successful_sync_returns_true_and_stores_vector(self):
         memory_file = self.memory_dir / "memory.md"
         memory_file.write_text(
@@ -170,6 +216,77 @@ class TestEmbeddingIndexSafety(unittest.TestCase):
             "文件解析失败时不能直接删除已有向量。",
         )
         self.assertIn("Skipping", output.getvalue())
+
+
+    def test_readonly_connection_allows_reads_and_rejects_writes(self):
+        self.insert_old_vector(
+            "mem_readonly_test",
+            self.memory_dir / "readonly.md",
+            "只读连接测试内容。",
+        )
+
+        with patch.object(embedding_index, "DB_PATH", self.db_path):
+            conn = embedding_index.get_readonly_db()
+            try:
+                rows = conn.execute(
+                    "SELECT id FROM embeddings"
+                ).fetchall()
+
+                self.assertEqual(
+                    rows,
+                    [("mem_readonly_test",)],
+                )
+
+                with self.assertRaises(sqlite3.OperationalError):
+                    conn.execute(
+                        "DELETE FROM embeddings WHERE id = ?",
+                        ("mem_readonly_test",),
+                    )
+            finally:
+                conn.close()
+
+        self.assertEqual(
+            self.read_vector_ids(),
+            ["mem_readonly_test"],
+            "只读连接不应改变现有向量记录。",
+        )
+
+    def test_readonly_connection_does_not_create_missing_database(self):
+        missing_db = self.root / "missing.sqlite"
+
+        with patch.object(embedding_index, "DB_PATH", missing_db):
+            with self.assertRaises(FileNotFoundError):
+                embedding_index.get_readonly_db()
+
+        self.assertFalse(
+            missing_db.exists(),
+            "数据库不存在时，只读连接不得创建新数据库。",
+        )
+
+
+    def test_search_uses_readonly_connection(self):
+        self.insert_old_vector(
+            "mem_search_readonly",
+            self.memory_dir / "search.md",
+            "检索只读测试内容。",
+        )
+
+        with patch.object(embedding_index, "DB_PATH", self.db_path), patch.object(
+            embedding_index,
+            "get_embedding",
+            return_value=[0.1, 0.2],
+        ):
+            results = embedding_index.search("测试查询", limit=5)
+
+        self.assertEqual(
+            [item["id"] for item in results],
+            ["mem_search_readonly"],
+        )
+        self.assertEqual(
+            self.read_vector_ids(),
+            ["mem_search_readonly"],
+            "语义检索不应改变已有向量记录。",
+        )
 
 
 if __name__ == "__main__":

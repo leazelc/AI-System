@@ -29,6 +29,19 @@ def get_db():
     return conn
 
 
+def get_readonly_db():
+    """Open the existing embedding index without permitting writes."""
+    if not DB_PATH.is_file():
+        raise FileNotFoundError(
+            f"Embedding index database not found: {DB_PATH}"
+        )
+
+    uri = DB_PATH.resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.execute("PRAGMA query_only = ON")
+    return conn
+
+
 def parse_memory(path):
     text = path.read_text(encoding="utf-8")
 
@@ -162,9 +175,9 @@ def sync():
 
         print(f"         dimension: {len(vector)}")
 
-    if parse_failed:
+    if parse_failed or embedding_failed:
         print(
-            "\n[WARNING] Markdown parsing failed. "
+            "\n[WARNING] Markdown parsing or embedding generation failed. "
             "Skipping index cleanup to preserve existing vectors."
         )
     else:
@@ -210,32 +223,33 @@ def cosine_similarity(a, b):
 
 
 def search(query, limit=5):
-    conn = get_db()
+    conn = get_readonly_db()
 
-    query_vector = get_embedding(query)
+    try:
+        query_vector = get_embedding(query)
 
-    rows = conn.execute("""
-        SELECT id, path, dimension, vector
-        FROM embeddings
-    """).fetchall()
+        rows = conn.execute("""
+            SELECT id, path, dimension, vector
+            FROM embeddings
+        """).fetchall()
 
-    results = []
+        results = []
 
-    for memory_id, path, dimension, blob in rows:
-        vector = blob_to_vector(blob, dimension)
+        for memory_id, path, dimension, blob in rows:
+            vector = blob_to_vector(blob, dimension)
 
-        score = cosine_similarity(
-            query_vector,
-            vector
-        )
+            score = cosine_similarity(
+                query_vector,
+                vector
+            )
 
-        results.append({
-            "id": memory_id,
-            "path": path,
-            "score": score
-        })
-
-    conn.close()
+            results.append({
+                "id": memory_id,
+                "path": path,
+                "score": score
+            })
+    finally:
+        conn.close()
 
     results.sort(
         key=lambda x: x["score"],
