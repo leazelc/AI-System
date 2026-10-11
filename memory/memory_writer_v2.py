@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+import threading
 import re
 
 from memory_updater import decide_update
@@ -19,13 +20,15 @@ def write_candidate(memory):
     """
     Write a memory candidate into the intermediate memory layer.
     Candidates are not active long-term memories.
+    Never overwrite an existing candidate file.
     """
     CANDIDATE_ROOT.mkdir(parents=True, exist_ok=True)
 
-    memory_id = f"candidate_{now_stamp()}"
-    path = CANDIDATE_ROOT / f"{memory_id}.md"
+    while True:
+        memory_id = f"candidate_{now_stamp()}"
+        path = CANDIDATE_ROOT / f"{memory_id}.md"
 
-    content = f"""---
+        content = f"""---
 id: {memory_id}
 type: {memory.get("type") or "unknown"}
 status: candidate
@@ -40,13 +43,23 @@ updated_at: {now_date()}
 {clean_memory_body(memory.get("memory"))}
 """
 
-    path.write_text(content, encoding="utf-8")
+        try:
+            with path.open("x", encoding="utf-8") as file:
+                try:
+                    file.write(content)
+                except BaseException:
+                    file.close()
+                    path.unlink(missing_ok=True)
+                    raise
+        except FileExistsError:
+            continue
+
+        break
 
     print(f"[CANDIDATE] {memory_id}")
     print(f"            {path}")
 
     return path
-
 
 def archive_candidate(path):
     """
@@ -188,16 +201,19 @@ def parse_frontmatter(text):
 
 
 def write_new_memory(memory):
+    """
+    Create a new active memory without overwriting existing files.
+    """
     memory_type = memory.get("type") or "preferences"
 
     target_dir = MEMORY_ROOT / memory_type
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    memory_id = f"mem_{now_stamp()}"
+    while True:
+        memory_id = f"mem_{now_stamp()}"
+        path = target_dir / f"{memory_id}.md"
 
-    path = target_dir / f"{memory_id}.md"
-
-    content = f"""---
+        content = f"""---
 id: {memory_id}
 type: {memory_type}
 status: active
@@ -212,13 +228,23 @@ updated_at: {now_date()}
 {clean_memory_body(memory.get("memory"))}
 """
 
-    path.write_text(content, encoding="utf-8")
+        try:
+            with path.open("x", encoding="utf-8") as file:
+                try:
+                    file.write(content)
+                except BaseException:
+                    file.close()
+                    path.unlink(missing_ok=True)
+                    raise
+        except FileExistsError:
+            continue
+
+        break
 
     print(f"[NEW] {memory_id}")
     print(f"      {path}")
 
     return path
-
 
 def archive_existing_memory(path, memory_id):
     """Archive the current active memory without losing history."""
@@ -295,7 +321,7 @@ def archive_existing_memory(path, memory_id):
                 )
 
 
-def update_memory(memory_id, memory):
+def _update_memory_unlocked(memory_id, memory):
     path = find_memory_file(memory_id)
 
     if not path:
@@ -392,6 +418,34 @@ updated_at: {now_date()}
     print(f"         {path}")
 
     return path
+
+
+
+# Serialize updates to the same memory within this Python process.
+_UPDATE_LOCKS = {}
+_UPDATE_LOCKS_GUARD = threading.Lock()
+
+
+def _get_update_lock(memory_id):
+    key = str(memory_id)
+
+    with _UPDATE_LOCKS_GUARD:
+        lock = _UPDATE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _UPDATE_LOCKS[key] = lock
+        return lock
+
+
+def update_memory(memory_id, memory):
+    """
+    Update one memory atomically with respect to other threads in this process.
+    Different memory IDs can still be updated concurrently.
+    """
+    lock = _get_update_lock(memory_id)
+
+    with lock:
+        return _update_memory_unlocked(memory_id, memory)
 
 
 def execute(user_input):
