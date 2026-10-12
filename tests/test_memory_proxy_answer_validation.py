@@ -424,6 +424,60 @@ class TestMemoryProxyHTTPInputSafety(unittest.TestCase):
 
         self.assertEqual(handler.responses[0][0], 429)
 
+    def test_upstream_connection_failure_returns_502_without_details(self):
+        handler = self.make_handler(json.dumps({
+            "messages": [{"role": "user", "content": "hello"}]
+        }))
+
+        with patch.object(
+            memory_proxy,
+            "build_memory_context",
+            return_value=("", [], False),
+        ), patch.object(
+            memory_proxy.urllib.request,
+            "urlopen",
+            side_effect=__import__(
+                "urllib.error", fromlist=["URLError"]
+            ).URLError("SECRET /private/internal/path"),
+        ):
+            handler.do_POST()
+
+        status, payload = handler.responses[0]
+        self.assertEqual(status, 502)
+        self.assertEqual(
+            payload["error"],
+            "Upstream model unavailable or timed out",
+        )
+        self.assertNotIn("SECRET", json.dumps(payload))
+        self.assertNotIn("/private/internal/path", json.dumps(payload))
+
+    def test_upstream_timeout_returns_502_without_details(self):
+        handler = self.make_handler(json.dumps({
+            "messages": [{"role": "user", "content": "hello"}]
+        }))
+
+        with patch.object(
+            memory_proxy,
+            "build_memory_context",
+            return_value=("", [], False),
+        ), patch.object(
+            memory_proxy.urllib.request,
+            "urlopen",
+            side_effect=TimeoutError(
+                "SECRET /private/internal/path"
+            ),
+        ):
+            handler.do_POST()
+
+        status, payload = handler.responses[0]
+        self.assertEqual(status, 502)
+        self.assertEqual(
+            payload["error"],
+            "Upstream model unavailable or timed out",
+        )
+        self.assertNotIn("SECRET", json.dumps(payload))
+        self.assertNotIn("/private/internal/path", json.dumps(payload))
+
     def test_string_stream_value_returns_400(self):
         handler = self.make_handler(json.dumps({
             "model": "test-model",

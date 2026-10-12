@@ -425,6 +425,18 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                     {"error": "Upstream model request failed"},
                 )
                 return
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                # Keep transport failures distinct from internal application errors.
+                # Log the exception type only to avoid leaking local paths or details.
+                print(
+                    "[Memory Proxy] Upstream transport failure: "
+                    f"{type(e).__name__}"
+                )
+                self.send_json(
+                    502,
+                    {"error": "Upstream model unavailable or timed out"},
+                )
+                return
 
             if stream:
                 self.handle_stream(
