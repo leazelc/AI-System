@@ -71,6 +71,8 @@ def main():
 
             stats["total"] += 1
             stats["passed"] += passed
+            if not passed:
+                stats["failed"] += 1
 
             print("预期结果：", " / ".join(sorted(case["expected"])))
             print("实际结果：", verdict)
@@ -87,11 +89,12 @@ def main():
     print("专项测试汇总")
     print("=" * 64)
     print(f"符合预期：{stats['passed']}/{stats['total']}")
+    print(f"结果不符：{stats['failed']}")
     print(f"执行异常：{stats['errors']}")
     print("本测试只调用校验器，不修改正式记忆、数据库或索引。")
     print("测试通过不代表校验器在所有场景下都可靠。")
 
-    return 1 if stats["errors"] else 0
+    return 1 if stats["failed"] or stats["errors"] else 0
 
 
 if __name__ == "__main__":

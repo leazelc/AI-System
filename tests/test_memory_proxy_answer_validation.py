@@ -235,3 +235,268 @@ class TestMemoryProxyStreamingValidation(unittest.TestCase):
         validator.assert_not_called()
         self.assertIn("测试答案", result)
         self.assertEqual(self.status_codes, [200])
+
+
+    def test_stream_missing_done_returns_502(self):
+        import io
+
+        self.upstream = io.BytesIO(
+            b'data: {"choices":[{"delta":{"content":"partial"}}]}\\n\\n'
+        )
+
+        with self.patch.object(
+            memory_proxy, "is_personal_memory_question",
+            return_value=False,
+        ):
+            self.run_stream()
+
+        self.assertEqual(self.json_errors[0][0], 502)
+        self.assertEqual(self.status_codes, [])
+        self.assertTrue(self.upstream.closed)
+
+    def test_stream_read_error_returns_502_and_closes_upstream(self):
+        class BrokenUpstream:
+            closed = False
+
+            def readline(self):
+                raise OSError("simulated upstream read failure")
+
+            def close(self):
+                self.closed = True
+
+        upstream = BrokenUpstream()
+        self.handler.handle_stream(
+            upstream, "test-model", "什么是机器学习？", "", False
+        )
+
+        self.assertEqual(self.json_errors[0][0], 502)
+        self.assertEqual(self.status_codes, [])
+        self.assertTrue(upstream.closed)
+
+    def test_stream_client_disconnect_does_not_send_second_response(self):
+        class BrokenOutput:
+            def write(self, data):
+                raise BrokenPipeError("simulated client disconnect")
+
+            def flush(self):
+                raise BrokenPipeError("simulated client disconnect")
+
+        self.handler.wfile = BrokenOutput()
+
+        with self.patch.object(
+            memory_proxy, "is_personal_memory_question",
+            return_value=False,
+        ):
+            self.run_stream()
+
+        self.assertEqual(self.status_codes, [200])
+        self.assertEqual(self.json_errors, [])
+        self.assertTrue(self.upstream.closed)
+
+
+class TestMemoryProxyHTTPInputSafety(unittest.TestCase):
+    """新增 HTTP 请求边界安全测试。"""
+
+    def make_handler(self, body, content_length=None):
+        handler = memory_proxy.MemoryProxyHandler.__new__(
+            memory_proxy.MemoryProxyHandler
+        )
+        handler.path = "/v1/chat/completions"
+        raw = body if isinstance(body, bytes) else body.encode("utf-8")
+        length = str(len(raw)) if content_length is None else str(content_length)
+        handler.headers = {"Content-Length": length}
+        handler.rfile = io.BytesIO(raw)
+        handler.responses = []
+        handler.send_json = lambda status, payload: handler.responses.append(
+            (status, payload)
+        )
+        return handler
+
+    def test_invalid_json_returns_400(self):
+        handler = self.make_handler("{invalid json")
+        handler.do_POST()
+        self.assertEqual(handler.responses[0][0], 400)
+
+    def test_json_array_returns_400(self):
+        handler = self.make_handler('[]')
+        handler.do_POST()
+        self.assertEqual(handler.responses[0][0], 400)
+
+    def test_messages_string_returns_400(self):
+        handler = self.make_handler(
+            json.dumps({"messages": "not-a-list"})
+        )
+        handler.do_POST()
+        self.assertEqual(handler.responses[0][0], 400)
+
+    def test_non_object_message_returns_400(self):
+        handler = self.make_handler(
+            json.dumps({"messages": ["invalid-message"]})
+        )
+        handler.do_POST()
+        self.assertEqual(handler.responses[0][0], 400)
+
+    def test_oversized_body_returns_413_without_reading(self):
+        handler = self.make_handler("{}", content_length=10 * 1024 * 1024 + 1)
+        handler.do_POST()
+        self.assertEqual(handler.responses[0][0], 413)
+
+    def test_internal_exception_details_are_not_returned(self):
+        handler = self.make_handler(
+            json.dumps({
+                "messages": [
+                    {"role": "user", "content": "hello"}
+                ]
+            })
+        )
+        with patch.object(
+            memory_proxy,
+            "build_memory_context",
+            side_effect=RuntimeError("SECRET /private/internal/path"),
+        ):
+            handler.do_POST()
+
+        status, payload = handler.responses[0]
+        self.assertEqual(status, 500)
+        self.assertEqual(payload["error"], "Internal server error")
+        self.assertNotIn("SECRET", json.dumps(payload))
+        self.assertNotIn("/private/internal/path", json.dumps(payload))
+
+    def test_upstream_http_error_body_is_hidden(self):
+        handler = self.make_handler(
+            json.dumps({
+                "messages": [
+                    {"role": "user", "content": "hello"}
+                ]
+            })
+        )
+        upstream_error = __import__("urllib.error", fromlist=["HTTPError"]).HTTPError(
+            "http://127.0.0.1:1234/v1/chat/completions",
+            503,
+            "Service Unavailable",
+            {},
+            io.BytesIO(b"SECRET upstream traceback /internal/path"),
+        )
+
+        with patch.object(
+            memory_proxy,
+            "build_memory_context",
+            return_value=("", [], False),
+        ), patch.object(
+            memory_proxy.urllib.request,
+            "urlopen",
+            side_effect=upstream_error,
+        ):
+            handler.do_POST()
+
+        status, payload = handler.responses[0]
+        self.assertEqual(status, 503)
+        self.assertEqual(payload["error"], "Upstream model request failed")
+        self.assertNotIn("SECRET", json.dumps(payload))
+        self.assertNotIn("/internal/path", json.dumps(payload))
+
+    def test_upstream_http_error_status_is_preserved(self):
+        handler = self.make_handler(
+            json.dumps({
+                "messages": [
+                    {"role": "user", "content": "hello"}
+                ]
+            })
+        )
+        upstream_error = __import__("urllib.error", fromlist=["HTTPError"]).HTTPError(
+            "http://127.0.0.1:1234/v1/chat/completions",
+            429,
+            "Too Many Requests",
+            {},
+            io.BytesIO(b"rate limit details"),
+        )
+
+        with patch.object(
+            memory_proxy,
+            "build_memory_context",
+            return_value=("", [], False),
+        ), patch.object(
+            memory_proxy.urllib.request,
+            "urlopen",
+            side_effect=upstream_error,
+        ):
+            handler.do_POST()
+
+        self.assertEqual(handler.responses[0][0], 429)
+
+    def test_string_stream_value_returns_400(self):
+        handler = self.make_handler(json.dumps({
+            "model": "test-model",
+            "stream": "false",
+            "messages": [{"role": "user", "content": "hello"}],
+        }))
+
+        with patch.object(
+            memory_proxy, "build_memory_context",
+            return_value=("", [], False),
+        ):
+            handler.do_POST()
+
+        self.assertEqual(handler.responses[0][0], 400)
+
+    def test_non_boolean_stream_value_returns_400(self):
+        handler = self.make_handler(json.dumps({
+            "stream": 1,
+            "messages": [{"role": "user", "content": "hello"}],
+        }))
+
+        handler.do_POST()
+        self.assertEqual(handler.responses[0][0], 400)
+
+    def test_non_object_content_part_returns_400(self):
+        handler = self.make_handler(json.dumps({
+            "messages": [{
+                "role": "user",
+                "content": ["invalid-part"],
+            }],
+        }))
+
+        handler.do_POST()
+        self.assertEqual(handler.responses[0][0], 400)
+
+    def test_text_content_part_with_non_string_text_returns_400(self):
+        handler = self.make_handler(json.dumps({
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": 123}],
+            }],
+        }))
+
+        handler.do_POST()
+        self.assertEqual(handler.responses[0][0], 400)
+
+    def test_valid_multimodal_content_part_is_not_rejected(self):
+        handler = self.make_handler(json.dumps({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "请描述这张图片"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.invalid/image.png"},
+                    },
+                ],
+            }],
+        }))
+
+        with patch.object(
+            memory_proxy, "build_memory_context",
+            return_value=("", [], False),
+        ), patch.object(
+            memory_proxy.urllib.request,
+            "urlopen",
+            side_effect=RuntimeError("stop before upstream"),
+        ):
+            handler.do_POST()
+
+        # 输入结构已通过校验；随后模拟的上游异常产生 500。
+        self.assertEqual(handler.responses[0][0], 500)
+        self.assertEqual(
+            handler.responses[0][1]["error"],
+            "Internal server error",
+        )

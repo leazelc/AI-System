@@ -174,13 +174,16 @@ def main():
         f"目标记忆检索覆盖：{stats['retrieval_covered']}/"
         f"{stats['retrieval_applicable']}（仅统计有目标记忆的题目）"
     )
+    failed = total - stats["full_pass"]
+
     print(f"完整通过：{stats['full_pass']}/{total}")
+    print(f"完整未通过：{failed}")
     print(f"执行异常：{stats['execution_errors']}")
 
     print("\n说明：这是 5 道题的初步试验，不能据此推断整个系统的总体准确率。")
     print("测试没有修改正式记忆、数据库或索引。")
 
-    return 1 if stats["execution_errors"] else 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -271,21 +271,82 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            content_length = int(
-                self.headers.get("Content-Length", "0")
-            )
+            try:
+                content_length = int(
+                    self.headers.get("Content-Length", "0")
+                )
+            except (TypeError, ValueError):
+                self.send_json(400, {"error": "Invalid Content-Length"})
+                return
+
+            if content_length <= 0:
+                self.send_json(400, {"error": "Request body is required"})
+                return
+
+            if content_length > 10 * 1024 * 1024:
+                self.send_json(413, {"error": "Request body too large"})
+                return
 
             raw_body = self.rfile.read(content_length)
-            body = json.loads(raw_body.decode("utf-8"))
 
-            messages = body.get("messages", [])
-
-            if not messages:
-                self.send_json(
-                    400,
-                    {"error": "messages is required"},
-                )
+            try:
+                body = json.loads(raw_body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self.send_json(400, {"error": "Invalid JSON body"})
                 return
+
+            if not isinstance(body, dict):
+                self.send_json(400, {"error": "JSON body must be an object"})
+                return
+
+            messages = body.get("messages")
+
+            if not isinstance(messages, list) or not messages:
+                self.send_json(400, {"error": "messages must be a non-empty list"})
+                return
+
+            if any(not isinstance(message, dict) for message in messages):
+                self.send_json(400, {"error": "Each message must be an object"})
+                return
+
+            if any(
+                not isinstance(message.get("role"), str)
+                or not isinstance(
+                    message.get("content", ""),
+                    (str, list, type(None)),
+                )
+                for message in messages
+            ):
+                self.send_json(400, {"error": "Invalid message format"})
+                return
+
+            # Validate multimodal content parts without rejecting valid
+            # image_url and other non-text content types.
+            for message in messages:
+                content = message.get("content", "")
+                if not isinstance(content, list):
+                    continue
+
+                for item in content:
+                    if (
+                        not isinstance(item, dict)
+                        or not isinstance(item.get("type"), str)
+                    ):
+                        self.send_json(
+                            400,
+                            {"error": "Invalid message content part"},
+                        )
+                        return
+
+                    if (
+                        item["type"] == "text"
+                        and not isinstance(item.get("text", ""), str)
+                    ):
+                        self.send_json(
+                            400,
+                            {"error": "Invalid text content part"},
+                        )
+                        return
 
             question = get_latest_user_message(messages)
 
@@ -318,9 +379,15 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                 memory_context
             )
 
-            stream = bool(
-                upstream_body.get("stream", False)
-            )
+            stream_value = upstream_body.get("stream", False)
+            if not isinstance(stream_value, bool):
+                self.send_json(
+                    400,
+                    {"error": "stream must be a boolean"},
+                )
+                return
+
+            stream = stream_value
 
             request_data = json.dumps(
                 upstream_body,
@@ -347,16 +414,15 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                     timeout=600
                 )
             except urllib.error.HTTPError as e:
-                error_body = e.read().decode(
-                    "utf-8",
-                    errors="replace"
+                # Do not expose upstream error bodies to the client.
+                # Avoid reading potentially large or sensitive error payloads.
+                print(
+                    f"[Memory Proxy] Upstream HTTP error: status={e.code}"
                 )
 
                 self.send_json(
                     e.code,
-                    {
-                        "error": error_body
-                    },
+                    {"error": "Upstream model request failed"},
                 )
                 return
 
@@ -386,7 +452,7 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                 self.send_json(
                     500,
                     {
-                        "error": str(e)
+                        "error": "Internal server error"
                     },
                 )
             except Exception:
@@ -459,6 +525,7 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
         raw_lines = []
         collected_text = []
         saw_done = False
+        response_started = False
 
         try:
             while True:
@@ -544,6 +611,7 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
+            response_started = True
 
             for line in raw_lines:
                 self.wfile.write(line)
@@ -552,8 +620,23 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             call_writer(question)
 
-        except BrokenPipeError:
+        except (BrokenPipeError, ConnectionResetError):
             print("[Memory Proxy] Client disconnected.")
+        except Exception as exc:
+            print(
+                f"[Memory Proxy] Stream transport failed: "
+                f"{type(exc).__name__}"
+            )
+            if not response_started:
+                try:
+                    self.send_json(502, {
+                        "error": {
+                            "message": "上游流式响应处理失败，请重试。",
+                            "type": "upstream_stream_error",
+                        }
+                    })
+                except Exception:
+                    pass
         finally:
             try:
                 upstream.close()

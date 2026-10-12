@@ -152,6 +152,8 @@ def main():
     print(f"执行失败：{failures}")
     print("正式记忆与索引未修改。")
 
+    return 1 if correct != len(CASES) or failures else 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

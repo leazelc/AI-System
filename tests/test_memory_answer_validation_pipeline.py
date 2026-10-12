@@ -146,16 +146,19 @@ def main():
     print("\n" + "=" * 68)
     print("试验汇总")
     print("=" * 68)
+    failed = total - stats["combined_pass"]
+
     print(f"可回答性判断正确：{stats['answerability_correct']}/{total}")
     print(f"独立校验 PASS：{stats['validator_pass']}/{total}")
     print(f"综合通过：{stats['combined_pass']}/{total}")
+    print(f"综合未通过：{failed}")
     print(f"执行异常：{stats['execution_errors']}")
     print()
     print("注意：PASS 只代表校验器认为答案与所提供证据一致，")
     print("不代表检索覆盖率、答案完整性或整个系统的准确率已得到证明。")
     print("本试验不会调用记忆写入器，不修改正式记忆、数据库或索引。")
 
-    return 1 if stats["execution_errors"] else 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
