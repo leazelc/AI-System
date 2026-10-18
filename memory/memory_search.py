@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 
-MEMORY_ROOT = Path.home() / "AI-System" / "memory"
+from aisystem_paths import MEMORY_ROOT
 
 # 允许直接从 memory 目录导入 embedding_index
 sys.path.insert(0, str(MEMORY_ROOT))

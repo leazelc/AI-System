@@ -37,6 +37,16 @@ class TestMemoryValidation(unittest.TestCase):
         decision["type"] = "random"
         self.assertFalse(validate_decision(decision)[0])
 
+    def test_plans_type_is_valid(self):
+        decision = valid_new_decision()
+        decision["type"] = "plans"
+        self.assertEqual(validate_decision(decision), (True, None))
+
+    def test_technical_config_type_is_valid(self):
+        decision = valid_new_decision()
+        decision["type"] = "technical_config"
+        self.assertEqual(validate_decision(decision), (True, None))
+
     def test_confidence_out_of_range(self):
         decision = valid_new_decision()
         decision["confidence"] = 1.5

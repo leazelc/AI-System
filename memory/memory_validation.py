@@ -4,6 +4,8 @@ import math
 VALID_TYPES = {
     "core",
     "preferences",
+    "plans",
+    "technical_config",
     "projects",
     "experiences",
     "decisions",

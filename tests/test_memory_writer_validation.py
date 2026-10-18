@@ -180,5 +180,171 @@ class TestMemoryWriterValidation(unittest.TestCase):
         self.assertNotIn("Writer operation completed.", result)
 
 
+    def test_expected_type_overrides_new_decision_type(self):
+        decision = {
+            "action": "NEW",
+            "target_id": None,
+            "type": "preferences",
+            "importance": 0.8,
+            "confidence": 0.9,
+            "memory": "测试新记忆类别约束。",
+        }
+
+        with patch(
+            "memory.memory_writer_v2.decide_update",
+            return_value=decision.copy(),
+        ) as decide_update, patch(
+            "memory.memory_writer_v2.write_candidate",
+            return_value=Path("/tmp/test_candidate.md"),
+        ), patch(
+            "memory.memory_writer_v2.write_new_memory",
+            return_value=Path("/tmp/test_memory.md"),
+        ) as write_new_memory, patch(
+            "memory.memory_writer_v2.archive_candidate"
+        ), patch(
+            "memory.memory_writer_v2.sync_indexes",
+            return_value=True,
+        ):
+            from memory.memory_writer_v2 import execute
+
+            output = StringIO()
+            with redirect_stdout(output):
+                result = execute(
+                    "测试新记忆类别约束",
+                    expected_type="projects",
+                )
+
+        self.assertEqual(result["status"], "success")
+        decide_update.assert_called_once_with(
+            "测试新记忆类别约束",
+            expected_type="projects",
+        )
+        self.assertEqual(
+            write_new_memory.call_args.args[0]["type"],
+            "projects",
+        )
+
+    def test_update_and_merge_reject_mismatched_target_type_before_writes(self):
+        from memory.memory_writer_v2 import execute
+
+        for action in ("UPDATE", "MERGE"):
+            with self.subTest(action=action):
+                decision = {
+                    "action": action,
+                    "target_id": "mem_existing",
+                    "type": "projects",
+                    "importance": 0.8,
+                    "confidence": 0.9,
+                    "memory": "测试类别不一致时拒绝写入。",
+                }
+
+                with patch(
+                    "memory.memory_writer_v2.decide_update",
+                    return_value=decision,
+                ), patch(
+                    "memory.memory_writer_v2.find_memory_file",
+                    return_value=Path("/tmp/fake_existing_memory.md"),
+                ), patch.object(
+                    Path,
+                    "read_text",
+                    return_value="---\\ntype: preferences\\n---\\n",
+                ), patch(
+                    "memory.memory_writer_v2.parse_frontmatter",
+                    return_value={"type": "preferences"},
+                ), patch(
+                    "memory.memory_writer_v2.write_candidate"
+                ) as write_candidate, patch(
+                    "memory.memory_writer_v2.update_memory"
+                ) as update_memory, patch(
+                    "memory.memory_writer_v2.sync_indexes"
+                ) as sync_indexes:
+                    output = StringIO()
+                    with redirect_stdout(output):
+                        result = execute(
+                            "测试类别不一致时拒绝写入",
+                            expected_type="projects",
+                        )
+
+                self.assertEqual(result["status"], "error")
+                self.assertEqual(result["action"], "REJECTED")
+                self.assertIn("[REJECTED]", output.getvalue())
+                write_candidate.assert_not_called()
+                update_memory.assert_not_called()
+                sync_indexes.assert_not_called()
+
+
+    def test_invalid_expected_type_is_rejected_before_any_write(self):
+        from memory.memory_writer_v2 import execute
+
+        with patch(
+            "memory.memory_writer_v2.decide_update"
+        ) as decide_update, patch(
+            "memory.memory_writer_v2.write_candidate"
+        ) as write_candidate, patch(
+            "memory.memory_writer_v2.write_new_memory"
+        ) as write_new_memory, patch(
+            "memory.memory_writer_v2.update_memory"
+        ) as update_memory, patch(
+            "memory.memory_writer_v2.sync_indexes"
+        ) as sync_indexes:
+            output = StringIO()
+            with redirect_stdout(output):
+                result = execute(
+                    "测试非法类别拦截",
+                    expected_type="invalid_category",
+                )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["action"], "REJECTED")
+        self.assertIn("[REJECTED]", output.getvalue())
+        decide_update.assert_not_called()
+        write_candidate.assert_not_called()
+        write_new_memory.assert_not_called()
+        update_memory.assert_not_called()
+        sync_indexes.assert_not_called()
+
+    def test_legacy_execute_call_without_expected_type(self):
+        from memory.memory_writer_v2 import execute
+
+        decision = {
+            "action": "NEW",
+            "target_id": None,
+            "type": "preferences",
+            "importance": 0.8,
+            "confidence": 0.9,
+            "memory": "验证旧接口调用兼容性。",
+        }
+
+        with patch(
+            "memory.memory_writer_v2.decide_update",
+            return_value=decision.copy(),
+        ) as decide_update, patch(
+            "memory.memory_writer_v2.write_candidate",
+            return_value=Path("/tmp/test_candidate.md"),
+        ), patch(
+            "memory.memory_writer_v2.write_new_memory",
+            return_value=Path("/tmp/test_memory.md"),
+        ) as write_new_memory, patch(
+            "memory.memory_writer_v2.archive_candidate"
+        ), patch(
+            "memory.memory_writer_v2.sync_indexes",
+            return_value=True,
+        ):
+            output = StringIO()
+            with redirect_stdout(output):
+                result = execute("验证旧接口调用兼容性")
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["action"], "NEW")
+        decide_update.assert_called_once_with(
+            "验证旧接口调用兼容性",
+            expected_type=None,
+        )
+        self.assertEqual(
+            write_new_memory.call_args.args[0]["type"],
+            "preferences",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

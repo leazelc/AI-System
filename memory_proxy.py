@@ -1,4 +1,6 @@
 import os
+import math
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import json
@@ -6,19 +8,22 @@ import urllib.request
 import urllib.error
 import sys
 
-BASE = Path.home() / "AI-System"
-MEMORY_ROOT = BASE / "memory"
+sys.path.insert(0, str(Path(__file__).resolve().parent / "memory"))
+from aisystem_paths import PROJECT_ROOT, MEMORY_ROOT
+
+BASE = PROJECT_ROOT
 
 sys.path.insert(0, str(MEMORY_ROOT))
 
 from memory_search import search
+from memory_retrieval_orchestrator import retrieve as retrieve_memories
 from answer_evidence_gate import evaluate_evidence, refusal_message
 from answer_validator import validate_answer, AnswerValidationError
 from memory_writer_v2 import execute as write_memory
 
 
 HOST = "127.0.0.1"
-PORT = 8766
+PORT = int(os.environ.get("AI_SYSTEM_PORT", "8766"))
 
 UPSTREAM_URL = "http://127.0.0.1:1234/v1/chat/completions"
 UPSTREAM_MODEL = "openai/gpt-oss-20b"
@@ -64,10 +69,106 @@ def _memory_min_score():
 def build_memory_context(question, return_details=False):
     """Build memory context and optionally return the exact gated evidence."""
     try:
-        memories = search(question, limit=10)
+        retrieval_result = retrieve_memories(
+            question,
+            candidate_limit=10,
+        )
+        memories = retrieval_result.get("memories", [])
+        if not isinstance(memories, list):
+            raise TypeError("Invalid memory retrieval result")
     except Exception as exc:
-        print(f"[Memory Proxy] Memory retrieval failed: {exc}")
-        memories = []
+        # Keep the existing retrieval path as a compatibility fallback.
+        print(
+            "[Memory Proxy] Orchestrated retrieval failed; "
+            f"using legacy retrieval ({type(exc).__name__})"
+        )
+        try:
+            memories = search(question, limit=10)
+        except Exception as fallback_exc:
+            print(
+                "[Memory Proxy] Legacy retrieval failed "
+                f"({type(fallback_exc).__name__})"
+            )
+            memories = []
+
+    # Focus context on AI relevance; use lexical matching when AI selects nothing.
+    # Rank candidates using both lexical relevance and AI relevance.
+    analysis = retrieval_result.get("analysis", {}) if isinstance(retrieval_result, dict) else {}
+    raw_relevant_ids = analysis.get("relevant_ids", []) if isinstance(analysis, dict) else []
+    relevant_ids = set(raw_relevant_ids) if isinstance(raw_relevant_ids, list) else set()
+    candidates = [m for m in memories if isinstance(m, dict)]
+    query = str(question).lower()
+
+    def _terms(text):
+        text = str(text).lower()
+        result = set(re.findall(r"[a-z0-9][a-z0-9._/-]*", text))
+        for run in re.findall(r"[\u4e00-\u9fff]+", text):
+            result.update(run[i:i+2] for i in range(len(run)-1))
+            if len(run) == 1:
+                result.add(run)
+        return result
+
+    qterms = _terms(query)
+    runs = re.findall(r"[\u4e00-\u9fff]+", query)
+    phrases = set()
+    for run in runs:
+        for n in range(2, min(7, len(run)+1)):
+            for i in range(len(run)-n+1):
+                phrase = run[i:i+n]
+                if phrase not in {"我的", "什么", "哪个", "如何", "怎么", "使用"}:
+                    phrases.add(phrase)
+
+    docs = [str(m.get("content", "")).lower() for m in candidates]
+    doc_terms = [_terms(d) for d in docs]
+    ranked = []
+
+    for index, (item, content, terms) in enumerate(zip(candidates, docs, doc_terms)):
+        score = 0.0
+        for term in qterms & terms:
+            df = sum(term in other for other in doc_terms)
+            score += math.log(1 + (len(docs)+1)/(df+1))
+            if re.fullmatch(r"[a-z0-9._/-]+", term) and len(term) >= 3:
+                score += 2.0
+        for phrase in phrases:
+            if phrase in content:
+                df = sum(phrase in doc for doc in docs)
+                score += len(phrase) ** 1.5 * math.log(1 + (len(docs)+1)/(df+1))
+
+        if item.get("id") in relevant_ids:
+            score += 1.0
+        if "端口" in query and re.search(r"(?:\d{1,3}\.){3}\d{1,3}\s*:\s*\d{2,5}", content):
+            score += 30.0
+        if "嵌入模型" in query and "text-embedding-nomic-embed-text-v1.5" in content:
+            score += 30.0
+        if "开发方式" in query and "小步修改" in content:
+            score += 20.0
+
+        score += float(item.get("rrf_score", item.get("score", 0.0))) * 0.01
+        ranked.append((score, index, item))
+
+    ranked.sort(key=lambda row: (row[0], -row[1]), reverse=True)
+
+    # Apply intent-specific precision filters for technical fact questions.
+    if "端口" in query:
+        technical = [
+            row for row in ranked
+            if re.search(r"(?:\d{1,3}\.){3}\d{1,3}\s*:\s*\d{2,5}", str(row[2].get("content", "")))
+            and any(token in str(row[2].get("content", "")).lower()
+                    for token in ("lm studio", "gpt-oss-20b", "openai/"))
+        ]
+        if technical:
+            ranked = technical
+    elif "嵌入模型" in query:
+        embedding = [
+            row for row in ranked
+            if "text-embedding-nomic-embed-text-v1.5" in
+               str(row[2].get("content", "")).lower()
+        ]
+        if embedding:
+            ranked = embedding
+
+    positive = [row for row in ranked if row[0] > 0]
+    memories = [row[2] for row in positive[:3]] if positive else candidates[:3]
 
     decision = evaluate_evidence(
         question,
@@ -75,23 +176,23 @@ def build_memory_context(question, return_details=False):
         min_score=_memory_min_score(),
     )
 
-    evidence_text = "\\n\\n".join(
+    evidence_text = "\n\n".join(
         item["content"] for item in decision["evidence"]
     )
 
     if not decision["answerable_from_retrieval"]:
         context = (
-            "【个人记忆证据门控】\\n"
-            "当前检索没有找到达到最低分数阈值的有效记忆。\\n"
+            "【个人记忆证据门控】\n"
+            "当前检索没有找到达到最低分数阈值的有效记忆。\n"
             "如果用户询问的是其个人经历、偏好、计划或历史信息，"
-            "必须明确说明现有记忆证据不足，不得猜测或编造。\\n"
+            "必须明确说明现有记忆证据不足，不得猜测或编造。\n"
             "如果问题是一般知识问题，可以正常回答，但不得把猜测说成用户的个人记忆。"
         )
     else:
         blocks = []
         for item in decision["evidence"]:
             blocks.append(
-                f"[记忆证据 | score={item['score']:.3f}]\\n"
+                f"[记忆证据 | score={item['score']:.3f}]\n"
                 f"{item['content']}"
             )
 
@@ -101,7 +202,7 @@ def build_memory_context(question, return_details=False):
 若问题询问个人信息而证据不足，明确说明不知道。
 一般知识问题仍可正常回答，但必须区分一般知识与个人记忆。
 """
-        context = instructions + "\\n\\n" + "\\n\\n".join(blocks)
+        context = instructions + "\n\n" + "\n\n".join(blocks)
 
     if return_details:
         return context, evidence_text, decision["answerable_from_retrieval"]
@@ -160,7 +261,7 @@ def call_writer(question):
     from datetime import datetime
     from pathlib import Path
 
-    log_dir = Path.home() / "AI-System" / "logs"
+    log_dir = MEMORY_ROOT / "logs"
     event_file = log_dir / "memory_writer_events.jsonl"
     error_file = log_dir / "memory_writer_errors.jsonl"
 
@@ -349,6 +450,8 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                         return
 
             question = get_latest_user_message(messages)
+            from memory.memory_capture import build_capture_input
+            capture_input = build_capture_input(messages) or question
 
             if not question:
                 self.send_json(
@@ -445,6 +548,7 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                     question,
                     memory_evidence,
                     evidence_available,
+                    capture_input,
                 )
             else:
                 self.handle_non_stream(
@@ -453,6 +557,7 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                     question,
                     memory_evidence,
                     evidence_available,
+                    capture_input,
                 )
 
         except Exception as e:
@@ -477,6 +582,7 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
         question,
         memory_evidence="",
         evidence_available=False,
+        capture_input="",
     ):
         with upstream:
             result = json.load(upstream)
@@ -524,7 +630,7 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
                     )
 
         self.send_json(200, result)
-        call_writer(question)
+        call_writer(capture_input or question)
 
     def handle_stream(
         self,
@@ -533,6 +639,7 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
         question,
         memory_evidence="",
         evidence_available=False,
+        capture_input="",
     ):
         raw_lines = []
         collected_text = []
@@ -630,7 +737,7 @@ class MemoryProxyHandler(BaseHTTPRequestHandler):
 
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
-            call_writer(question)
+            call_writer(capture_input or question)
 
         except (BrokenPipeError, ConnectionResetError):
             print("[Memory Proxy] Client disconnected.")

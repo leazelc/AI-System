@@ -57,6 +57,8 @@ JSON 格式必须严格为：
 type 只能是：
 core
 preferences
+plans
+technical_config
 projects
 experiences
 decisions

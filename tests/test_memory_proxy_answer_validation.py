@@ -116,8 +116,6 @@ class TestMemoryProxyAnswerValidation(unittest.TestCase):
         writer.assert_called_once_with("什么是俄语语法？")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestMemoryProxyStreamingValidation(unittest.TestCase):
@@ -554,3 +552,79 @@ class TestMemoryProxyHTTPInputSafety(unittest.TestCase):
             handler.responses[0][1]["error"],
             "Internal server error",
         )
+
+class TestMemoryRetrievalOrchestratorIntegration(unittest.TestCase):
+    def setUp(self):
+        self.question = "我们之前讨论过什么计划？"
+        self.memory = {
+            "id": "integration-memory-1",
+            "content": "用户计划继续学习俄语。",
+            "score": 0.9,
+            "metadata": {"status": "active"},
+        }
+        self.decision = {
+            "evidence": [{
+                "content": self.memory["content"],
+                "score": 0.9,
+            }],
+            "answerable_from_retrieval": True,
+        }
+
+    def test_orchestrated_memories_reach_evidence_gate(self):
+        with patch(
+            "memory_proxy.retrieve_memories",
+            return_value={"memories": [self.memory]},
+        ) as orchestrator, patch(
+            "memory_proxy.search"
+        ) as legacy_search, patch(
+            "memory_proxy.evaluate_evidence",
+            return_value=self.decision,
+        ) as evidence_gate:
+            context, evidence, answerable = (
+                memory_proxy.build_memory_context(
+                    self.question, return_details=True
+                )
+            )
+
+        orchestrator.assert_called_once_with(
+            self.question, candidate_limit=10
+        )
+        legacy_search.assert_not_called()
+        evidence_gate.assert_called_once_with(
+            self.question,
+            [self.memory],
+            min_score=memory_proxy._memory_min_score(),
+        )
+        self.assertTrue(answerable)
+        self.assertEqual(evidence, self.memory["content"])
+        self.assertIn(self.memory["content"], context)
+
+    def test_orchestrator_failure_falls_back_through_evidence_gate(self):
+        fallback_memories = [self.memory]
+        with patch(
+            "memory_proxy.retrieve_memories",
+            side_effect=RuntimeError("simulated retrieval failure"),
+        ), patch(
+            "memory_proxy.search",
+            return_value=fallback_memories,
+        ) as legacy_search, patch(
+            "memory_proxy.evaluate_evidence",
+            return_value=self.decision,
+        ) as evidence_gate:
+            context, evidence, answerable = (
+                memory_proxy.build_memory_context(
+                    self.question, return_details=True
+                )
+            )
+
+        legacy_search.assert_called_once_with(self.question, limit=10)
+        evidence_gate.assert_called_once_with(
+            self.question,
+            fallback_memories,
+            min_score=memory_proxy._memory_min_score(),
+        )
+        self.assertTrue(answerable)
+        self.assertEqual(evidence, self.memory["content"])
+        self.assertIn(self.memory["content"], context)
+if __name__ == "__main__":
+    unittest.main()

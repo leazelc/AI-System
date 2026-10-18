@@ -1,11 +1,12 @@
 from pathlib import Path
 import sqlite3
+from aisystem_paths import MEMORY_ROOT, CORE_DB_PATH
 
-MEMORY_ROOT = Path.home() / "AI-System" / "memory"
-INDEX_DB = MEMORY_ROOT / "index" / "memory.sqlite"
+INDEX_DB = CORE_DB_PATH
 
 
 def get_db():
+    INDEX_DB.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(INDEX_DB)
 
     conn.execute("""

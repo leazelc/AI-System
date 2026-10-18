@@ -7,12 +7,10 @@ from memory_updater import decide_update
 from memory_core import scan as scan_core
 from embedding_index import sync as sync_embeddings
 from memory import keyword_index
-from memory_validation import validate_decision
+from memory_validation import validate_decision, VALID_TYPES
 
 
-MEMORY_ROOT = Path.home() / "AI-System" / "memory"
-ARCHIVE_ROOT = MEMORY_ROOT / "archive"
-CANDIDATE_ROOT = MEMORY_ROOT / "candidates"
+from aisystem_paths import MEMORY_ROOT, ARCHIVE_ROOT, CANDIDATE_ROOT
 CANDIDATE_ARCHIVE_ROOT = CANDIDATE_ROOT / "archive"
 
 
@@ -448,14 +446,27 @@ def update_memory(memory_id, memory):
         return _update_memory_unlocked(memory_id, memory)
 
 
-def execute(user_input):
+def execute(user_input, expected_type=None):
     print("Running Memory Writer V2...\\n")
 
-    decision = decide_update(user_input)
+    if expected_type is not None and expected_type not in VALID_TYPES:
+        print(f"[REJECTED] Invalid expected_type: {expected_type!r}")
+        return {"status": "error", "action": "REJECTED"}
+
+    decision = decide_update(user_input, expected_type=expected_type)
 
     if not decision:
         print("[ERROR] No decision returned.")
         return {"status": "error", "action": "UNKNOWN"}
+
+    if not isinstance(decision, dict):
+        print("[REJECTED] Invalid memory decision: expected a dictionary.")
+        return {"status": "error", "action": "REJECTED"}
+
+    action = decision.get("action")
+
+    if action == "NEW" and expected_type is not None:
+        decision["type"] = expected_type
 
     is_valid, reason = validate_decision(decision)
     if not is_valid:
@@ -475,10 +486,36 @@ def execute(user_input):
         return {"status": "error", "action": action or "UNKNOWN"}
 
     target_id = decision.get("target_id")
-    if action in ("UPDATE", "MERGE") and not find_memory_file(target_id):
-        print(f"[REJECTED] Target memory does not exist: {target_id}")
-        print("No candidate or active memory was written.")
-        return {"status": "error", "action": "REJECTED"}
+    if action in ("UPDATE", "MERGE"):
+        target_path = find_memory_file(target_id)
+        if not target_path:
+            print(f"[REJECTED] Target memory does not exist: {target_id}")
+            print("No candidate or active memory was written.")
+            return {"status": "error", "action": "REJECTED"}
+
+        try:
+            target_text = target_path.read_text(encoding="utf-8", errors="ignore")
+            target_metadata = parse_frontmatter(target_text)
+            target_type = target_metadata.get("type")
+        except Exception as exc:
+            print(f"[REJECTED] Could not verify target memory type: {exc}")
+            return {"status": "error", "action": "REJECTED"}
+
+        if target_type not in VALID_TYPES:
+            print(f"[REJECTED] Target memory has invalid or missing type: {target_type!r}")
+            print("No candidate or active memory was written.")
+            return {"status": "error", "action": "REJECTED"}
+
+        if expected_type is not None and target_type != expected_type:
+            print(
+                f"[REJECTED] Category mismatch: expected {expected_type!r}, "
+                f"but target memory type is {target_type!r}."
+            )
+            print("No candidate or active memory was written.")
+            return {"status": "error", "action": "REJECTED"}
+
+        # Existing memory categories are immutable during UPDATE/MERGE.
+        decision["type"] = target_type
 
     if not decision.get("memory"):
         print(f"[ERROR] {action} without memory content.")

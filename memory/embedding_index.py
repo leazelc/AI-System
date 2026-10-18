@@ -1,19 +1,21 @@
 from pathlib import Path
 import sqlite3
+from aisystem_paths import MEMORY_ROOT, EMBEDDING_DB_PATH
 import json
 import hashlib
 import urllib.request
 import math
 import struct
 
-MEMORY_ROOT = Path.home() / "AI-System" / "memory"
-DB_PATH = MEMORY_ROOT / "index" / "embeddings.sqlite"
+# MEMORY_ROOT is imported from aisystem_paths.
+DB_PATH = EMBEDDING_DB_PATH
 
 LM_STUDIO_URL = "http://127.0.0.1:1234/v1/embeddings"
 EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
 
 
 def get_db():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS embeddings (

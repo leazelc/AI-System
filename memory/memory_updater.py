@@ -7,11 +7,16 @@ import urllib.request
 
 from memory_gate import ask_gate
 from embedding_index import search as semantic_search
+from memory_validation import VALID_TYPES
 
 
-MEMORY_ROOT = Path.home() / "AI-System" / "memory"
+from aisystem_paths import MEMORY_ROOT
 LM_STUDIO_URL = "http://127.0.0.1:1234/v1/chat/completions"
 MODEL = "openai/gpt-oss-20b"
+
+
+class DecisionOutputError(ValueError):
+    """Raised when a local model returns malformed decision JSON."""
 
 
 def ask_updater(prompt):
@@ -175,21 +180,31 @@ def strip_code_fences(text):
     return text.strip()
 
 
-def decide_update(user_text):
+def decide_update(user_text, expected_type=None):
+    # Validate the structured category before invoking the Memory Gate.
+    if expected_type is not None and expected_type not in VALID_TYPES:
+        raise DecisionOutputError(
+            f"Invalid expected_type: {expected_type!r}"
+        )
+
     gate_raw = ask_gate(user_text)
 
     try:
         gate = json.loads(strip_code_fences(gate_raw))
-    except json.JSONDecodeError:
-        return {
-            "action": "IGNORE",
-            "target_id": None,
-            "type": None,
-            "importance": 0.0,
-            "confidence": 0.0,
-            "memory": None,
-            "reason": "Memory Gate returned invalid JSON."
-        }
+    except json.JSONDecodeError as exc:
+        raise DecisionOutputError(
+            "Memory Gate returned invalid JSON."
+        ) from exc
+
+    if not isinstance(gate, dict):
+        raise DecisionOutputError(
+            "Memory Gate output must be a JSON object."
+        )
+
+    if not isinstance(gate.get("should_remember"), bool):
+        raise DecisionOutputError(
+            "Memory Gate output has an invalid should_remember field."
+        )
 
     if not gate.get("should_remember"):
         return {
@@ -313,18 +328,23 @@ NEW / UPDATE / MERGE / IGNORE
 
     try:
         decision = json.loads(raw)
-    except json.JSONDecodeError:
-        return {
-            "action": "IGNORE",
-            "target_id": None,
-            "type": gate.get("type"),
-            "importance": gate.get("importance", 0.0),
-            "confidence": gate.get("confidence", 0.0),
-            "memory": None,
-            "reason": "Updater returned invalid JSON."
-        }
+    except json.JSONDecodeError as exc:
+        raise DecisionOutputError(
+            "Updater returned invalid JSON."
+        ) from exc
 
-    action = decision.get("action", "IGNORE")
+    if not isinstance(decision, dict):
+        raise DecisionOutputError(
+            "Updater output must be a JSON object."
+        )
+
+    action = decision.get("action")
+    if not isinstance(action, str) or action not in {
+        "NEW", "UPDATE", "MERGE", "IGNORE"
+    }:
+        raise DecisionOutputError(
+            f"Updater returned an invalid action: {action!r}."
+        )
 
     # Reliability fallback:
     # Do not silently discard a Gate-approved long-term fact
@@ -347,42 +367,31 @@ NEW / UPDATE / MERGE / IGNORE
                 "and its exact text was not found in active candidates."
             )
 
-    if action not in {
-        "NEW",
-        "UPDATE",
-        "MERGE",
-        "IGNORE"
-    }:
-        action = "IGNORE"
-
     target_id = decision.get("target_id")
 
     if action in {"UPDATE", "MERGE"}:
         valid_ids = {item["id"] for item in candidates}
 
-        if not target_id or target_id not in valid_ids:
-            return {
-                "action": "IGNORE",
-                "target_id": None,
-                "type": gate.get("type"),
-                "importance": gate.get("importance", 0.0),
-                "confidence": gate.get("confidence", 0.0),
-                "memory": None,
-                "reason": (
-                    f"Invalid {action} target: "
-                    f"{target_id!r} is not in the active candidate list."
-                )
-            }
+        if not isinstance(target_id, str) or target_id not in valid_ids:
+            raise DecisionOutputError(
+                f"Invalid {action} target: "
+                f"{target_id!r} is not in the active candidate list."
+            )
 
     if action in {"NEW", "UPDATE", "MERGE"}:
         memory = decision.get("memory") or gate.get("memory")
+        if not isinstance(memory, str) or not memory.strip():
+            raise DecisionOutputError(
+                f"Updater selected {action} without valid memory text."
+            )
+        memory = memory.strip()
     else:
         memory = None
 
     return {
         "action": action,
         "target_id": target_id,
-        "type": gate.get("type"),
+        "type": (expected_type if action == "NEW" and expected_type is not None else gate.get("type")),
         "importance": gate.get("importance", 0.0),
         "confidence": gate.get("confidence", 0.0),
         "memory": memory,
