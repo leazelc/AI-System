@@ -390,6 +390,64 @@ class TestRetrievalEndToEnd(unittest.TestCase):
         self.assertTrue(result["diagnostics"]["analysis_used_ai"])
         self.assertEqual(result["diagnostics"]["analysis_status"], "success")
 
+    def test_ai_relevance_order_is_preserved_within_selected_candidates(self):
+        from memory_retrieval_orchestrator import retrieve
+
+        responses = [
+            {"queries": []},
+            {
+                "relevant_ids": ["third-by-score", "second-by-score"],
+                "missing_aspects": [],
+                "followup_queries": [],
+            },
+        ]
+
+        def fake_model(system, prompt):
+            return responses.pop(0)
+
+        def fake_semantic(query, limit=10, min_score=None):
+            return [
+                {
+                    "id": "first-by-score",
+                    "path": "/tmp/a.md",
+                    "score": 0.99,
+                    "metadata": {},
+                    "content": "传统排名第一",
+                },
+                {
+                    "id": "second-by-score",
+                    "path": "/tmp/b.md",
+                    "score": 0.90,
+                    "metadata": {},
+                    "content": "传统排名第二",
+                },
+                {
+                    "id": "third-by-score",
+                    "path": "/tmp/c.md",
+                    "score": 0.80,
+                    "metadata": {},
+                    "content": "AI 判断最相关",
+                },
+            ]
+
+        result = retrieve(
+            "测试 AI 相关性排序",
+            model_json_fn=fake_model,
+            semantic_search_fn=fake_semantic,
+            keyword_search_fn=lambda query, limit=10: [],
+        )
+
+        ids = [item["id"] for item in result["memories"]]
+        self.assertEqual(
+            ids,
+            ["third-by-score", "second-by-score", "first-by-score"],
+        )
+        self.assertEqual(
+            result["analysis"]["relevant_ids"],
+            ["third-by-score", "second-by-score"],
+        )
+
+
     def test_analysis_rejects_non_object_model_response(self):
         from memory_retrieval_orchestrator import analyze_candidates
 
@@ -546,6 +604,48 @@ class TestAIRetrievalDiagnostics(unittest.TestCase):
 
         self.assertTrue(result["diagnostics"]["planning_used_ai"])
         self.assertFalse(result["diagnostics"]["analysis_used_ai"])
+
+    def test_query_limit_one_skips_planning_but_keeps_ai_analysis(self):
+        from memory_retrieval_orchestrator import retrieve
+
+        model_calls = []
+
+        def fake_model(system, prompt):
+            model_calls.append((system, prompt))
+
+            # 查询规划不应调用模型；唯一一次调用应是候选分析。
+            self.assertIn("Retrieved candidates (JSON):", prompt)
+            return {
+                "relevant_ids": ["memory-a"],
+                "missing_aspects": [],
+                "followup_queries": [],
+            }
+
+        result = retrieve(
+            "之前的电脑预算是多少？",
+            model_json_fn=fake_model,
+            semantic_search_fn=self.semantic_results,
+            keyword_search_fn=self.no_keyword_results,
+            query_limit=1,
+            followup_limit=0,
+        )
+
+        self.assertEqual(
+            result["queries"],
+            ["之前的电脑预算是多少？"],
+        )
+        self.assertEqual(len(model_calls), 1)
+        self.assertFalse(result["diagnostics"]["planning_used_ai"])
+        self.assertTrue(result["diagnostics"]["analysis_used_ai"])
+        self.assertEqual(
+            result["diagnostics"]["analysis_status"],
+            "success",
+        )
+        self.assertEqual(
+            [item["id"] for item in result["memories"]],
+            ["memory-a"],
+        )
+
 
     def test_valid_planning_and_analysis_are_reported_as_success(self):
         responses = [

@@ -487,8 +487,11 @@ def analyze_candidates(
         f"{question}\n\n"
         "Retrieved candidates (JSON):\n"
         f"{json.dumps(compact_candidates, ensure_ascii=False)}\n\n"
-        "Identify IDs that may contain evidence relevant to the question, "
-        "what evidence is still missing, and up to two targeted follow-up "
+        "Identify candidate IDs that contain evidence relevant to the "
+        "question. Return relevant_ids ordered from most relevant to least "
+        "relevant. This order must reflect your relevance judgment, not "
+        "alphabetical order or merely the supplied scores. Also identify "
+        "what evidence is still missing and up to two targeted follow-up "
         "search queries if they could help. Do not answer the question. "
         "Only use IDs present in the supplied candidates.\n"
         'Return JSON: {"relevant_ids": [], "missing_aspects": [], '
@@ -687,11 +690,18 @@ def retrieve(
     # AI relevance is a bounded ranking signal, not proof of factual truth.
     # If analysis fails or selects no IDs, the existing hybrid ranking remains
     # unchanged. Apply the same ordering after any follow-up merge.
-    relevant_ids = set(analysis.get("relevant_ids", []))
+    # Preserve the AI-selected relevance order. Unselected candidates
+    # retain deterministic hybrid-ranking order as a fallback.
+    relevant_ids = analysis.get("relevant_ids", [])
+    relevant_positions = {
+        memory_id: position
+        for position, memory_id in enumerate(relevant_ids)
+    }
     memories = sorted(
         memories,
         key=lambda item: (
-            item["id"] in relevant_ids,
+            item["id"] in relevant_positions,
+            -relevant_positions.get(item["id"], 0),
             item["rrf_score"],
             item["score"],
             item["id"],

@@ -22,3 +22,23 @@ venv/
 .DS_Store
 .vscode/
 .idea/
+
+# Local runtime data, logs, indexes and temporary cleanup copies
+logs/
+memory/index/
+memory_failed_*/
+stage8-backup-*/
+
+# Local application bundles and preview artifacts
+desktop/*.app/
+desktop/AI-System-Preview
+
+# Local backups and pre-change snapshots
+*.bak
+*.bak-*
+*.backup
+*.backup-*
+*.before-*
+*.before_*
+*.stage*.bak
+*.backup_*

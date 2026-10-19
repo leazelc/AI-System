@@ -587,7 +587,9 @@ class TestMemoryRetrievalOrchestratorIntegration(unittest.TestCase):
             )
 
         orchestrator.assert_called_once_with(
-            self.question, candidate_limit=10
+            self.question,
+            query_limit=memory_proxy.MEMORY_QUERY_LIMIT,
+            candidate_limit=10,
         )
         legacy_search.assert_not_called()
         evidence_gate.assert_called_once_with(

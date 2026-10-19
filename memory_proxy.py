@@ -8,12 +8,17 @@ import urllib.request
 import urllib.error
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "memory"))
+CODE_ROOT = Path(__file__).resolve().parent
+CODE_MEMORY_ROOT = CODE_ROOT / "memory"
+
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+if str(CODE_MEMORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_MEMORY_ROOT))
+
 from aisystem_paths import PROJECT_ROOT, MEMORY_ROOT
 
 BASE = PROJECT_ROOT
-
-sys.path.insert(0, str(MEMORY_ROOT))
 
 from memory_search import search
 from memory_retrieval_orchestrator import retrieve as retrieve_memories
@@ -24,6 +29,18 @@ from memory_writer_v2 import execute as write_memory
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("AI_SYSTEM_PORT", "8766"))
+
+
+def _memory_query_limit():
+    """Return the bounded number of retrieval queries (1–4)."""
+    try:
+        value = int(os.environ.get("AI_MEMORY_QUERY_LIMIT", "1"))
+    except (TypeError, ValueError):
+        value = 1
+    return max(1, min(4, value))
+
+
+MEMORY_QUERY_LIMIT = _memory_query_limit()
 
 UPSTREAM_URL = "http://127.0.0.1:1234/v1/chat/completions"
 UPSTREAM_MODEL = "openai/gpt-oss-20b"
@@ -68,9 +85,11 @@ def _memory_min_score():
 
 def build_memory_context(question, return_details=False):
     """Build memory context and optionally return the exact gated evidence."""
+    retrieval_result = {}
     try:
         retrieval_result = retrieve_memories(
             question,
+            query_limit=MEMORY_QUERY_LIMIT,
             candidate_limit=10,
         )
         memories = retrieval_result.get("memories", [])
